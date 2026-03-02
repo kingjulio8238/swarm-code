@@ -129,14 +129,14 @@ async function fetchUrl(url: string): Promise<string> {
 async function main(): Promise<void> {
 	const args = parseArgs();
 
-	// Resolve model by scanning all providers
+	// Resolve model by scanning all providers (stop at first match)
 	let model: Model<Api> | undefined;
 	const allModelIds: string[] = [];
 	for (const provider of getProviders()) {
 		const providerModels = getModels(provider);
 		for (const m of providerModels) {
 			allModelIds.push(m.id);
-			if (m.id === args.modelId) {
+			if (!model && m.id === args.modelId) {
 				model = m;
 			}
 		}
