@@ -32,7 +32,7 @@ const HELP = `
 \x1b[1mCONFIGURATION\x1b[0m
   .env file:
     ANTHROPIC_API_KEY=sk-ant-...
-    RLM_MODEL=claude-sonnet-4-5-20250929
+    RLM_MODEL=claude-sonnet-4-6
 
   rlm_config.yaml:
     max_iterations: 20
@@ -135,7 +135,8 @@ async function main() {
 
 		default: {
 			if (command.startsWith("--")) {
-				// Flags without subcommand → assume "run"
+				// Flags without subcommand → assume "run", pass all args through
+				process.argv = [process.argv[0], process.argv[1], ...args];
 				await import("./cli.js");
 			} else {
 				console.error(`Unknown command: ${command}`);

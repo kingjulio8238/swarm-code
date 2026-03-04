@@ -37,12 +37,16 @@ __final_result__ = None
 def FINAL(x):
     """Set the final answer as a string and terminate the RLM loop."""
     global __final_result__
+    if __final_result__ is not None:
+        print(f"[Warning] FINAL() called again — overwriting previous answer", file=sys.stderr)
     __final_result__ = str(x)
 
 
 def FINAL_VAR(x):
     """Set the final answer from a variable and terminate the RLM loop."""
     global __final_result__
+    if __final_result__ is not None and x is not None:
+        print(f"[Warning] FINAL_VAR() called again — overwriting previous answer", file=sys.stderr)
     __final_result__ = str(x) if x is not None else None
 
 

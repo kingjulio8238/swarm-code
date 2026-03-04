@@ -158,15 +158,23 @@ export class PythonRepl {
 	/** Gracefully shut down the Python subprocess. */
 	shutdown(): void {
 		if (this.proc && this.proc.exitCode === null) {
+			const proc = this.proc;
 			try {
 				this.send({ type: "shutdown" });
 			} catch {
 				// stdin may already be closed
 			}
-			// SIGTERM is ignored on Windows; use SIGKILL as fallback
-			try {
-				this.proc.kill(process.platform === "win32" ? "SIGKILL" : "SIGTERM");
-			} catch { /* already dead */ }
+			if (process.platform === "win32") {
+				// Windows: SIGTERM is ignored, kill immediately
+				try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+			} else {
+				// Unix: give Python 500ms to exit gracefully, then force kill
+				const killTimer = setTimeout(() => {
+					try { if (proc.exitCode === null) proc.kill("SIGKILL"); } catch {}
+				}, 500);
+				proc.on("exit", () => clearTimeout(killTimer));
+				try { proc.kill("SIGTERM"); } catch { /* already dead */ }
+			}
 		}
 		this.cleanup();
 	}
@@ -177,7 +185,11 @@ export class PythonRepl {
 		if (!this.proc || !this.proc.stdin || this.proc.stdin.destroyed) {
 			throw new Error("REPL subprocess is not running");
 		}
-		this.proc.stdin.write(`${JSON.stringify(msg)}\n`);
+		try {
+			this.proc.stdin.write(`${JSON.stringify(msg)}\n`);
+		} catch {
+			throw new Error("REPL subprocess stdin write failed");
+		}
 	}
 
 	private handleLine(line: string): void {
