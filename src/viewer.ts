@@ -440,18 +440,20 @@ function renderIteration(state: ViewState): void {
 	if (state.scrollY < 0) state.scrollY = 0;
 
 	const from = state.scrollY;
-	const to = Math.min(allLines.length, from + viewable);
+	// Reserve lines for scroll indicators when needed
+	const hasScrollUp = from > 0;
+	const hasScrollDown = (from + viewable) < allLines.length;
+	const contentLines = viewable - (hasScrollUp ? 1 : 0) - (hasScrollDown ? 1 : 0);
+	const to = Math.min(allLines.length, from + contentLines);
 
 	W(c.cursorHome, c.clearScreen, c.hideCursor);
 
-	// Scroll indicator at top
-	if (from > 0) {
+	if (hasScrollUp) {
 		W(`  ${c.dim}^ scroll up (${from} lines above)${c.reset}\n`);
 	}
 	for (let i = from; i < to; i++) W(allLines[i] + "\n");
 
-	if (to < allLines.length) {
-		// Replace last visible line with scroll indicator
+	if (hasScrollDown) {
 		W(`  ${c.dim}v scroll down (${allLines.length - to} lines below)${c.reset}\n`);
 	}
 
@@ -642,18 +644,19 @@ function renderSubQueryDetail(state: ViewState): void {
 	if (state.scrollY < 0) state.scrollY = 0;
 
 	const from = state.scrollY;
-	const to = Math.min(allLines.length, from + viewable);
+	const hasScrollUp = from > 0;
+	const hasScrollDown = (from + viewable) < allLines.length;
+	const contentLines = viewable - (hasScrollUp ? 1 : 0) - (hasScrollDown ? 1 : 0);
+	const to = Math.min(allLines.length, from + contentLines);
 
 	W(c.cursorHome, c.clearScreen, c.hideCursor);
 
-	if (from > 0) {
+	if (hasScrollUp) {
 		W(`  ${c.dim}^ scroll up (${from} lines above)${c.reset}\n`);
-		for (let i = from + 1; i < to; i++) W(allLines[i] + "\n");
-	} else {
-		for (let i = from; i < to; i++) W(allLines[i] + "\n");
 	}
+	for (let i = from; i < to; i++) W(allLines[i] + "\n");
 
-	if (to < allLines.length) {
+	if (hasScrollDown) {
 		W(`  ${c.dim}v scroll down (${allLines.length - to} lines below)${c.reset}\n`);
 	}
 
