@@ -136,18 +136,60 @@ async function fetchUrl(url: string): Promise<string> {
 async function main(): Promise<void> {
 	const args = parseArgs();
 
-	// Resolve model by scanning all providers (stop at first match)
+	// Provider → env var mapping
+	const providerKeys: Record<string, string> = {
+		anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY",
+		google: "GEMINI_API_KEY", "google-gemini-cli": "GEMINI_API_KEY",
+		groq: "GROQ_API_KEY", xai: "XAI_API_KEY",
+		mistral: "MISTRAL_API_KEY", openrouter: "OPENROUTER_API_KEY",
+	};
+	const defaultModels: Record<string, string> = {
+		anthropic: "claude-sonnet-4-6", openai: "gpt-4o",
+		google: "gemini-2.5-flash", groq: "llama-3.3-70b-versatile",
+		xai: "grok-4", mistral: "mistral-large-latest", openrouter: "claude-sonnet-4-6",
+	};
+
+	// Resolve model — ensure provider has an API key
 	let model: Model<Api> | undefined;
+	let resolvedProvider = "";
 	const allModelIds: string[] = [];
 	for (const provider of getProviders()) {
 		const providerModels = getModels(provider);
 		for (const m of providerModels) {
 			allModelIds.push(m.id);
 			if (!model && m.id === args.modelId) {
-				model = m;
+				const key = providerKeys[provider] || `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+				if (process.env[key]) {
+					model = m;
+					resolvedProvider = provider;
+				}
 			}
 		}
 	}
+
+	// Fallback: if default model's provider has no key, pick one that does
+	if (!model) {
+		for (const [prov, envKey] of Object.entries(providerKeys)) {
+			if (!process.env[envKey]) continue;
+			const fallbackId = defaultModels[prov];
+			if (!fallbackId) continue;
+			for (const p of getProviders()) {
+				if (p !== prov) continue;
+				for (const m of getModels(p)) {
+					if (m.id === fallbackId) {
+						model = m;
+						resolvedProvider = prov;
+						args.modelId = fallbackId;
+						console.error(`Note: using ${fallbackId} (${prov}) — set RLM_MODEL to override`);
+						break;
+					}
+				}
+				if (model) break;
+			}
+			if (model) break;
+		}
+	}
+
 	if (!model) {
 		console.error(`Error: unknown model "${args.modelId}"`);
 		console.error(`Available models: ${allModelIds.join(", ")}`);
@@ -157,6 +199,16 @@ async function main(): Promise<void> {
 	// Load context
 	let context: string;
 	if (args.file) {
+		try {
+			const stat = fs.statSync(args.file);
+			if (stat.isDirectory()) {
+				console.error(`Error: "${args.file}" is a directory. Use the interactive mode (\`rlm\`) for directory loading.`);
+				process.exit(1);
+			}
+		} catch (err: any) {
+			console.error(`Error: could not access "${args.file}": ${err.message}`);
+			process.exit(1);
+		}
 		console.error(`Reading context from file: ${args.file}`);
 		try {
 			context = fs.readFileSync(args.file, "utf-8");

@@ -447,10 +447,8 @@ function renderIteration(state: ViewState): void {
 	// Scroll indicator at top
 	if (from > 0) {
 		W(`  ${c.dim}^ scroll up (${from} lines above)${c.reset}\n`);
-		for (let i = from + 1; i < to; i++) W(allLines[i] + "\n");
-	} else {
-		for (let i = from; i < to; i++) W(allLines[i] + "\n");
 	}
+	for (let i = from; i < to; i++) W(allLines[i] + "\n");
 
 	if (to < allLines.length) {
 		// Replace last visible line with scroll indicator

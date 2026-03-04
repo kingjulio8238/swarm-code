@@ -15,9 +15,11 @@ import { fileURLToPath } from "node:url";
 function loadEnvFile(filePath: string): void {
 	if (!fs.existsSync(filePath)) return;
 	const content = fs.readFileSync(filePath, "utf-8");
-	for (const line of content.split("\n")) {
-		const trimmed = line.trim();
+	for (const rawLine of content.split("\n")) {
+		let trimmed = rawLine.trim();
 		if (!trimmed || trimmed.startsWith("#")) continue;
+		// Strip leading "export " (common in .env files)
+		if (trimmed.startsWith("export ")) trimmed = trimmed.slice(7);
 		const eqIndex = trimmed.indexOf("=");
 		if (eqIndex === -1) continue;
 		const key = trimmed.slice(0, eqIndex).trim();
