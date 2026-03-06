@@ -54,6 +54,15 @@ for (const [key, value] of fileVars) {
 	}
 }
 
+// Alias: GOOGLE_API_KEY → GEMINI_API_KEY (pi-ai expects GEMINI_API_KEY)
+// Remove GOOGLE_API_KEY after aliasing to avoid pi-ai "both set" warning
+if (process.env.GOOGLE_API_KEY) {
+	if (!process.env.GEMINI_API_KEY) {
+		process.env.GEMINI_API_KEY = process.env.GOOGLE_API_KEY;
+	}
+	delete process.env.GOOGLE_API_KEY;
+}
+
 // Default model
 if (!process.env.RLM_MODEL) {
 	process.env.RLM_MODEL = "claude-sonnet-4-6";

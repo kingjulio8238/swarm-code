@@ -12,6 +12,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import * as readline from "node:readline";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -141,8 +142,25 @@ interface FileEntry {
 	traj?: TrajectoryData;
 }
 
+/** Parse only the metadata fields from a trajectory JSON (not the full iterations array). */
+function parseTrajectoryMeta(filePath: string): Partial<TrajectoryData> | undefined {
+	try {
+		const raw = fs.readFileSync(filePath, "utf-8");
+		// Quick partial parse: extract just the top-level fields we need for the list
+		const data = JSON.parse(raw);
+		return {
+			query: data.query,
+			iterations: data.iterations ? new Array(data.iterations.length) as any : [],
+			result: data.result ? { completed: data.result.completed } as any : null,
+		};
+	} catch { return undefined; }
+}
+
 function listTrajectories(): FileEntry[] {
-	const dir = path.resolve(process.cwd(), "trajectories");
+	// Check both ~/.rlm/trajectories/ (default) and ./trajectories/ (legacy/local)
+	const homeDir = path.join(os.homedir(), ".rlm", "trajectories");
+	const localDir = path.resolve(process.cwd(), "trajectories");
+	const dir = fs.existsSync(homeDir) ? homeDir : localDir;
 	if (!fs.existsSync(dir)) return [];
 	return fs
 		.readdirSync(dir)
@@ -150,10 +168,7 @@ function listTrajectories(): FileEntry[] {
 		.map((f) => {
 			const full = path.join(dir, f);
 			const stat = fs.statSync(full);
-			let traj: TrajectoryData | undefined;
-			try {
-				traj = JSON.parse(fs.readFileSync(full, "utf-8"));
-			} catch { /* skip */ }
+			const traj = parseTrajectoryMeta(full) as TrajectoryData | undefined;
 			return { name: f, path: full, size: stat.size, mtime: stat.mtime, traj };
 		})
 		.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()); // newest first

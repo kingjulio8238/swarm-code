@@ -1,6 +1,6 @@
 {
   "name": "rlm-cli",
-  "version": "0.3.7",
+  "version": "0.4.3",
   "description": "Standalone CLI for Recursive Language Models (RLMs) — implements Algorithm 1 from arXiv:2512.24601",
   "type": "module",
   "bin": {
@@ -11,8 +11,7 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/runtime.py",
-    "bin",
-    "rlm_config.yaml"
+    "bin"
   ],
   "scripts": {
     "dev": "tsx src/main.ts",

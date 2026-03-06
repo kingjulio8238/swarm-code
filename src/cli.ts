@@ -123,12 +123,23 @@ async function readStdin(): Promise<string> {
 	return Buffer.concat(chunks).toString("utf-8");
 }
 
+const FETCH_TIMEOUT_MS = 30_000;
+const MAX_RESPONSE_BYTES = 50 * 1024 * 1024; // 50MB
+
 async function fetchUrl(url: string): Promise<string> {
-	const resp = await fetch(url);
+	const resp = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 	if (!resp.ok) {
 		throw new Error(`Failed to fetch ${url}: ${resp.status} ${resp.statusText}`);
 	}
-	return resp.text();
+	const contentLength = resp.headers.get("content-length");
+	if (contentLength && parseInt(contentLength, 10) > MAX_RESPONSE_BYTES) {
+		throw new Error(`Response too large (${(parseInt(contentLength, 10) / 1024 / 1024).toFixed(1)}MB). Limit is ${MAX_RESPONSE_BYTES / 1024 / 1024}MB.`);
+	}
+	const text = await resp.text();
+	if (text.length > MAX_RESPONSE_BYTES) {
+		throw new Error(`Response too large (${(text.length / 1024 / 1024).toFixed(1)}MB). Limit is ${MAX_RESPONSE_BYTES / 1024 / 1024}MB.`);
+	}
+	return text;
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -139,14 +150,11 @@ async function main(): Promise<void> {
 	// Provider → env var mapping
 	const providerKeys: Record<string, string> = {
 		anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY",
-		google: "GEMINI_API_KEY", "google-gemini-cli": "GEMINI_API_KEY",
-		groq: "GROQ_API_KEY", xai: "XAI_API_KEY",
-		mistral: "MISTRAL_API_KEY", openrouter: "OPENROUTER_API_KEY",
+		google: "GEMINI_API_KEY",
 	};
 	const defaultModels: Record<string, string> = {
 		anthropic: "claude-sonnet-4-6", openai: "gpt-4o",
-		google: "gemini-2.5-flash", groq: "llama-3.3-70b-versatile",
-		xai: "grok-4", mistral: "mistral-large-latest", openrouter: "claude-sonnet-4-6",
+		google: "gemini-2.5-flash",
 	};
 
 	// Resolve model — ensure provider has an API key
@@ -254,10 +262,12 @@ async function main(): Promise<void> {
 	const repl = new PythonRepl();
 	const ac = new AbortController();
 
-	process.on("SIGINT", () => {
+	const abortAndExit = () => {
 		console.error("\nAborting...");
 		ac.abort();
-	});
+	};
+	process.on("SIGINT", abortAndExit);
+	process.on("SIGTERM", abortAndExit);
 
 	try {
 		await repl.start(ac.signal);

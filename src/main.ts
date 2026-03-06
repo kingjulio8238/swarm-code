@@ -128,7 +128,7 @@ async function main() {
 				const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
 				console.log(`rlm v${pkg.version}`);
 			} catch {
-				console.log("rlm v0.1.0");
+				console.log("rlm (version unknown)");
 			}
 			break;
 		}

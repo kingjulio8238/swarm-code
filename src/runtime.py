@@ -39,6 +39,9 @@ context: str = ""
 # Sentinel — when set to a non-None value, the loop terminates
 __final_result__ = None
 
+# User execution namespace — isolates LLM code from REPL internals
+_user_ns: dict = {}
+
 
 def FINAL(x):
     """Set the final answer as a string and terminate the RLM loop."""
@@ -123,9 +126,22 @@ async def async_llm_query(sub_context: str, instruction: str = "") -> str:
     return await asyncio.get_event_loop().run_in_executor(None, llm_query, sub_context, instruction)
 
 
+def _refresh_user_ns() -> None:
+    """Ensure the user namespace has the latest runtime symbols."""
+    _user_ns.update({
+        '__builtins__': __builtins__,
+        'context': context,
+        'llm_query': llm_query,
+        'async_llm_query': async_llm_query,
+        'FINAL': FINAL,
+        'FINAL_VAR': FINAL_VAR,
+    })
+
+
 def _execute_code(code: str) -> None:
-    """Execute a code snippet in the module's global scope, capturing output."""
+    """Execute a code snippet in an isolated namespace, capturing output."""
     global __final_result__
+    _refresh_user_ns()
     captured_stdout = io.StringIO()
     captured_stderr = io.StringIO()
     old_stdout = sys.stdout
@@ -138,15 +154,21 @@ def _execute_code(code: str) -> None:
         try:
             # Try to compile as regular code first
             compiled = compile(code, "<repl>", "exec")
-            exec(compiled, globals())
+            exec(compiled, _user_ns)
         except SyntaxError as e:
             if "await" in str(code):
                 # Code contains await — run it in an async context
-                async_code = f"async def __async_exec__():\n"
+                # We must copy locals back to user namespace so variables persist across iterations
+                # But we must NOT clobber runtime-critical symbols
+                _protected = {'context', 'llm_query', 'async_llm_query', 'FINAL', 'FINAL_VAR', '__builtins__'}
+                async_code = "async def __async_exec__():\n"
                 for line in code.split("\n"):
                     async_code += f"    {line}\n"
-                async_code += "\nimport asyncio\nasyncio.run(__async_exec__())"
-                exec(compile(async_code, "<repl>", "exec"), globals())
+                async_code += "    return {k: v for k, v in locals().items()}\n"
+                async_code += "\nimport asyncio as _asyncio\n"
+                async_code += "_async_locals = _asyncio.run(__async_exec__())\n"
+                async_code += f"globals().update({{k: v for k, v in _async_locals.items() if k not in {_protected!r}}})\n"
+                exec(compile(async_code, "<repl>", "exec"), _user_ns)
             else:
                 raise e
     except Exception:

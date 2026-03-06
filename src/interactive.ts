@@ -129,14 +129,6 @@ const PROVIDER_KEYS: Record<string, string> = {
 	anthropic: "ANTHROPIC_API_KEY",
 	openai: "OPENAI_API_KEY",
 	google: "GEMINI_API_KEY",
-	"google-gemini-cli": "GEMINI_API_KEY",
-	"google-vertex": "GOOGLE_VERTEX_API_KEY",
-	groq: "GROQ_API_KEY",
-	xai: "XAI_API_KEY",
-	mistral: "MISTRAL_API_KEY",
-	openrouter: "OPENROUTER_API_KEY",
-	huggingface: "HF_TOKEN",
-	cerebras: "CEREBRAS_API_KEY",
 };
 
 // User-facing provider list for setup & /provider command
@@ -144,10 +136,6 @@ const SETUP_PROVIDERS = [
 	{ name: "Anthropic", label: "Claude", env: "ANTHROPIC_API_KEY", piProvider: "anthropic" },
 	{ name: "OpenAI", label: "GPT", env: "OPENAI_API_KEY", piProvider: "openai" },
 	{ name: "Google", label: "Gemini", env: "GEMINI_API_KEY", piProvider: "google" },
-	{ name: "Groq", label: "Groq", env: "GROQ_API_KEY", piProvider: "groq" },
-	{ name: "xAI", label: "Grok", env: "XAI_API_KEY", piProvider: "xai" },
-	{ name: "Mistral", label: "Mistral", env: "MISTRAL_API_KEY", piProvider: "mistral" },
-	{ name: "OpenRouter", label: "OpenRouter", env: "OPENROUTER_API_KEY", piProvider: "openrouter" },
 ];
 
 function providerEnvKey(provider: string): string {
@@ -201,10 +189,6 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 	anthropic: "claude-sonnet-4-6",
 	openai: "gpt-4o",
 	google: "gemini-2.5-flash",
-	groq: "llama-3.3-70b-versatile",
-	xai: "grok-4",
-	mistral: "mistral-large-latest",
-	openrouter: "claude-sonnet-4-6",
 };
 
 /** Returns the recommended default model for a provider. */
@@ -219,23 +203,37 @@ function getDefaultModelForProvider(provider: string): string | undefined {
 	return models.length > 0 ? models[0].id : undefined;
 }
 
-/** Wrap rl.question with ESC-to-cancel. Returns user input or null on ESC/empty. */
-function questionWithEsc(rlInstance: readline.Interface, promptText: string): Promise<string | null> {
+/** Wrap rl.question with ESC-to-cancel. Returns user input or null on ESC/empty.
+ *  When secret=true, suppresses character echo (for API keys). */
+function questionWithEsc(rlInstance: readline.Interface, promptText: string, opts?: { secret?: boolean }): Promise<string | null> {
 	return new Promise((resolve) => {
 		let escaped = false;
+		const rlAny = rlInstance as any;
+		let savedWrite: ((str: string) => void) | undefined;
+
+		if (opts?.secret) {
+			// Suppress readline's echo — write prompt ourselves, hide typed chars
+			savedWrite = rlAny._writeToOutput;
+			rlAny._writeToOutput = function () {};
+			process.stdout.write(promptText);
+		}
+
 		const onKeypress = (_str: string | undefined, key: { name?: string } | undefined) => {
 			if (key?.name === "escape" && !escaped) {
 				escaped = true;
 				stdin.removeListener("keypress", onKeypress);
-				// Clear the prompt line visually
+				if (savedWrite) rlAny._writeToOutput = savedWrite;
 				process.stdout.write("\r\x1b[2K");
-				// Programmatically submit empty to close the pending question
 				rlInstance.write("\n");
 			}
 		};
 		stdin.on("keypress", onKeypress);
-		rlInstance.question(promptText, (answer) => {
+		rlInstance.question(opts?.secret ? "" : promptText, (answer) => {
 			stdin.removeListener("keypress", onKeypress);
+			if (savedWrite) {
+				rlAny._writeToOutput = savedWrite;
+				process.stdout.write("\n");
+			}
 			resolve(escaped ? null : answer.trim() || null);
 		});
 	});
@@ -249,7 +247,7 @@ async function promptForProviderKey(
 ): Promise<boolean | null> {
 	if (process.env[providerInfo.env]) return true;
 
-	const rawKey = await questionWithEsc(rlInstance, `  ${c.cyan}${providerInfo.env}:${c.reset} `);
+	const rawKey = await questionWithEsc(rlInstance, `  ${c.cyan}${providerInfo.env}:${c.reset} `, { secret: true });
 	if (rawKey === null) return null; // ESC
 	if (!rawKey) return false; // empty
 
@@ -279,9 +277,29 @@ async function promptForProviderKey(
 		console.log(`\n  ${c.green}✓${c.reset} ${providerInfo.name} key saved to ${c.dim}~/.rlm/credentials${c.reset}`);
 	} catch {
 		console.log(`\n  ${c.yellow}!${c.reset} Could not save key. Add manually:`);
-		console.log(`    ${c.yellow}export ${providerInfo.env}=${key}${c.reset}`);
+		console.log(`    ${c.yellow}export ${providerInfo.env}=<your-key>${c.reset}`);
 	}
 	return true;
+}
+
+/** Persist the user's model choice to ~/.rlm/credentials so it survives restarts. */
+function saveModelPreference(modelId: string): void {
+	const credPath = path.join(RLM_HOME, "credentials");
+	try {
+		if (!fs.existsSync(RLM_HOME)) fs.mkdirSync(RLM_HOME, { recursive: true });
+		// Remove existing RLM_MODEL entry
+		if (fs.existsSync(credPath)) {
+			const existing = fs.readFileSync(credPath, "utf-8");
+			const filtered = existing.split("\n").filter((l) => {
+				const t = l.trim();
+				if (t.startsWith("export ")) return !t.slice(7).startsWith("RLM_MODEL=");
+				return !t.startsWith("RLM_MODEL=");
+			}).join("\n");
+			fs.writeFileSync(credPath, filtered.endsWith("\n") ? filtered : filtered + "\n");
+		}
+		fs.appendFileSync(credPath, `RLM_MODEL=${modelId}\n`);
+		try { fs.chmodSync(credPath, 0o600); } catch {}
+	} catch { /* best-effort */ }
 }
 
 /** Find the SETUP_PROVIDERS entry that owns a given pi-ai provider name. */
@@ -444,9 +462,7 @@ async function handleUrl(arg: string): Promise<void> {
 	}
 	console.log(`  ${c.dim}Fetching ${arg}...${c.reset}`);
 	try {
-		const resp = await fetch(arg);
-		if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
-		contextText = await resp.text();
+		contextText = await safeFetch(arg);
 		contextSource = arg;
 		const lines = contextText.split("\n").length;
 		console.log(
@@ -665,29 +681,12 @@ const EXCLUDED_MODEL_PATTERNS = [
 	/^gemini-1\.5-/,             // all 1.5 retired
 	/^gemini-3-pro-preview$/,    // deprecated, shuts down Mar 9, 2026
 	/^gemini-live-/,             // real-time streaming, not standard chat
-	// ── xAI non-chat ──
-	/^grok-beta$/,
-	/^grok-vision-beta$/,
-	/^grok-2-vision/,
-	/^grok-2-1212$/,             // dated snapshot
-	// ── Mistral legacy ──
-	/^open-mistral-7b$/,
-	/^open-mixtral-/,
-	/^mistral-nemo$/,
 	// ── Dated snapshots / previews ──
 	/preview-\d{2}-\d{2}$/,      // e.g. preview-04-17
 	/preview-\d{2}-\d{4}$/,      // e.g. preview-09-2025
 	/^labs-/,
 	/-customtools$/,
 	/deep-research$/,
-	// Mistral dated snapshots (use -latest instead)
-	/^mistral-large-\d{4}$/,
-	/^mistral-medium-\d{4}$/,
-	/^mistral-small-\d{4}$/,
-	/^devstral-\d{4}$/,
-	/^devstral-\w+-\d{4}$/,
-	// Groq dated snapshots
-	/kimi-k2-instruct-\d+$/,
 ];
 
 function isModelExcluded(modelId: string): boolean {
@@ -728,6 +727,23 @@ function truncateStr(text: string, max: number): string {
 
 const MAX_FILES = 100;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024; // 10MB
+const FETCH_TIMEOUT_MS = 30_000;
+const MAX_RESPONSE_BYTES = 50 * 1024 * 1024; // 50MB
+
+/** Fetch a URL with timeout and size limits. */
+async function safeFetch(url: string): Promise<string> {
+	const resp = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+	if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+	const contentLength = resp.headers.get("content-length");
+	if (contentLength && parseInt(contentLength, 10) > MAX_RESPONSE_BYTES) {
+		throw new Error(`Response too large (${(parseInt(contentLength, 10) / 1024 / 1024).toFixed(1)}MB)`);
+	}
+	const text = await resp.text();
+	if (text.length > MAX_RESPONSE_BYTES) {
+		throw new Error(`Response too large (${(text.length / 1024 / 1024).toFixed(1)}MB)`);
+	}
+	return text;
+}
 
 const BINARY_EXTENSIONS = new Set([
 	".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg",
@@ -1196,9 +1212,7 @@ async function detectAndLoadUrl(input: string): Promise<boolean> {
 		const url = urlMatch[0];
 		console.log(`  ${c.dim}Fetching ${url}...${c.reset}`);
 		try {
-			const resp = await fetch(url);
-			if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
-			contextText = await resp.text();
+			contextText = await safeFetch(url);
 			contextSource = url;
 			const lines = contextText.split("\n").length;
 			console.log(
@@ -1262,6 +1276,7 @@ async function interactive(): Promise<void> {
 			const defaultModel = getDefaultModelForProvider(provider.piProvider);
 			if (defaultModel) {
 				currentModelId = defaultModel;
+				saveModelPreference(currentModelId);
 				console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
 			}
 			console.log();
@@ -1440,6 +1455,7 @@ async function interactive(): Promise<void> {
 						currentModelId = pick;
 						currentModel = resolved.model;
 						currentProviderName = resolved.provider;
+						saveModelPreference(currentModelId);
 						console.log(`  ${c.green}✓${c.reset} Switched to ${c.bold}${currentModelId}${c.reset}`);
 						console.log();
 						printStatusLine();
@@ -1506,6 +1522,7 @@ async function interactive(): Promise<void> {
 						const provResolved = resolveModelWithProvider(currentModelId);
 						currentModel = provResolved?.model;
 						currentProviderName = provResolved?.provider || chosen.piProvider;
+						saveModelPreference(currentModelId);
 						console.log(`  ${c.green}✓${c.reset} Switched to ${c.bold}${chosen.name}${c.reset}`);
 						console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
 						console.log();
@@ -1552,9 +1569,7 @@ async function interactive(): Promise<void> {
 				const queryWithoutUrl = query.replace(url, "").trim();
 				console.log(`  ${c.dim}Fetching ${url}...${c.reset}`);
 				try {
-					const resp = await fetch(url);
-					if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
-					contextText = await resp.text();
+					contextText = await safeFetch(url);
 					contextSource = url;
 					const lines = contextText.split("\n").length;
 					console.log(
