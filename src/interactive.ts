@@ -577,11 +577,14 @@ function wrapText(text: string, maxWidth: number): string[] {
 	return result;
 }
 
-function sectionHeader(title: string, color: string): string {
-	return `    ${color}${title}${c.reset}`;
+function hrule(label?: string, color: string = c.dim): string {
+	const w = BOX_W - 2;
+	if (!label) return `    ${color}${"─".repeat(w)}${c.reset}`;
+	const right = Math.max(0, w - label.length - 3);
+	return `    ${color}── ${c.reset}${label}${color} ${"─".repeat(right)}${c.reset}`;
 }
 
-function sectionLine(text: string, color: string): string {
+function borderLine(text: string, color: string = c.dim): string {
 	return `    ${color}│${c.reset} ${text}`;
 }
 
@@ -590,37 +593,40 @@ function displayCode(code: string): void {
 	const lineNumWidth = String(lines.length).length;
 	const codeMaxW = MAX_CONTENT_W - lineNumWidth - 1;
 
-	console.log(sectionHeader("Code", c.dim));
+	console.log(hrule("Code"));
 	for (let i = 0; i < lines.length; i++) {
 		const wrapped = wrapText(lines[i], codeMaxW);
 		for (let j = 0; j < wrapped.length; j++) {
 			const prefix = j === 0
 				? `${c.dim}${String(i + 1).padStart(lineNumWidth)}${c.reset}`
 				: " ".repeat(lineNumWidth);
-			console.log(sectionLine(`${prefix} ${c.cyan}${wrapped[j]}${c.reset}`, c.dim));
+			console.log(borderLine(`${prefix} ${c.cyan}${wrapped[j]}${c.reset}`));
 		}
 	}
+	console.log(hrule());
 }
 
 function displayOutput(output: string): void {
 	const lines = output.split("\n").filter(l => l.trim() !== "");
 
-	console.log(sectionHeader("Output", c.dim));
+	console.log(hrule("Output"));
 	for (const line of lines) {
 		for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-			console.log(sectionLine(`${c.green}${chunk}${c.reset}`, c.dim));
+			console.log(borderLine(`${c.green}${chunk}${c.reset}`));
 		}
 	}
+	console.log(hrule());
 }
 
 function displayError(stderr: string): void {
 	const lines = stderr.split("\n").filter(l => l.trim() !== "");
-	console.log(sectionHeader("Error", c.red));
+	console.log(hrule(`${c.red}Error${c.reset}`));
 	for (const line of lines) {
 		for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-			console.log(sectionLine(`${c.red}${chunk}${c.reset}`, c.red));
+			console.log(borderLine(`${c.red}${chunk}${c.reset}`, c.red));
 		}
 	}
+	console.log(hrule());
 }
 
 function formatSize(chars: number): string {
@@ -628,12 +634,12 @@ function formatSize(chars: number): string {
 }
 
 function displaySubQueryStart(info: SubQueryStartInfo): void {
-	console.log(`    ${c.magenta}┌─ Sub-query #${info.index}${c.reset} ${c.dim}sending ${formatSize(info.contextLength)} chars${c.reset}`);
+	console.log(hrule(`${c.magenta}Sub-query #${info.index}${c.reset}  ${c.dim}${formatSize(info.contextLength)} chars`));
 
 	const instrLines = info.instruction.split("\n").filter(l => l.trim());
 	for (const line of instrLines) {
 		for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-			console.log(`    ${c.magenta}│${c.reset}  ${c.dim}${chunk}${c.reset}`);
+			console.log(borderLine(`${c.dim}${chunk}${c.reset}`, c.magenta));
 		}
 	}
 }
@@ -642,15 +648,14 @@ function displaySubQueryResult(info: SubQueryInfo): void {
 	const elapsed = (info.elapsedMs / 1000).toFixed(1);
 	const resultLines = info.resultPreview.split("\n");
 
-	console.log(`    ${c.magenta}│${c.reset}`);
-	console.log(`    ${c.magenta}│${c.reset} ${c.green}${c.bold}Response:${c.reset}`);
+	console.log(borderLine("", c.magenta));
+	console.log(borderLine(`${c.green}Response:${c.reset}`, c.magenta));
 	for (const line of resultLines) {
 		for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-			console.log(`    ${c.magenta}│${c.reset}  ${c.green}${chunk}${c.reset}`);
+			console.log(borderLine(`${c.green}${chunk}${c.reset}`, c.magenta));
 		}
 	}
-
-	console.log(`    ${c.magenta}└─${c.reset} ${c.dim}${elapsed}s · ${formatSize(info.resultLength)} received${c.reset}`);
+	console.log(hrule(`${c.dim}${elapsed}s · ${formatSize(info.resultLength)} received`));
 }
 
 // ── Available models list ────────────────────────────────────────────────────
@@ -982,12 +987,13 @@ async function runQuery(query: string): Promise<void> {
 			const totalSec = ((Date.now() - startTime) / 1000).toFixed(1);
 
 			const answerLines = answer.split("\n");
-			console.log(`\n  ${c.green}✔ Response${c.reset}  ${c.dim}${totalSec}s${c.reset}`);
+			console.log(hrule(`${c.green}✔ Response${c.reset}  ${c.dim}${totalSec}s`));
 			for (const line of answerLines) {
 				for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-					console.log(sectionLine(chunk, c.green));
+					console.log(borderLine(chunk, c.green));
 				}
 			}
+			console.log(hrule());
 			console.log();
 		} catch (err: any) {
 			spinner.stop();
@@ -1057,8 +1063,7 @@ async function runQuery(query: string): Promise<void> {
 					};
 
 					const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-					console.log(`  ${c.dim}─────${c.reset}`);
-					console.log(`  ${c.bold}Step ${info.iteration}${c.reset}${c.dim}/${info.maxIterations}  ${elapsed}s${c.reset}`);
+					console.log(hrule(`${c.bold}Step ${info.iteration}${c.reset}${c.dim}/${info.maxIterations}  ${elapsed}s`));
 					spinner.start("Generating code");
 				}
 
@@ -1127,12 +1132,13 @@ async function runQuery(query: string): Promise<void> {
 		const stats = `${result.iterations} step${result.iterations !== 1 ? "s" : ""} · ${result.totalSubQueries} sub-quer${result.totalSubQueries !== 1 ? "ies" : "y"} · ${totalSec}s`;
 
 		const answerLines = result.answer.split("\n");
-		console.log(`\n  ${c.green}✔ Result${c.reset}  ${c.dim}${stats}${c.reset}`);
+		console.log(hrule(`${c.green}✔ Result${c.reset}  ${c.dim}${stats}`));
 		for (const line of answerLines) {
 			for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-				console.log(sectionLine(chunk, c.green));
+				console.log(borderLine(chunk, c.green));
 			}
 		}
+		console.log(hrule());
 		console.log();
 
 		// Save trajectory
