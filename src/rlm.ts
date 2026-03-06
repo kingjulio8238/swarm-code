@@ -323,30 +323,70 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 			systemPrompt: iteration === 1 ? buildSystemPrompt() : undefined,
 		});
 
-		const response = await raceAbort(
-			completeSimple(model, {
-				systemPrompt: buildSystemPrompt(),
-				messages: conversationHistory,
-			}),
-			signal,
-		);
+		let response;
+		try {
+			response = await raceAbort(
+				completeSimple(model, {
+					systemPrompt: buildSystemPrompt(),
+					messages: conversationHistory,
+				}),
+				signal,
+			);
+		} catch (apiErr) {
+			if (signal?.aborted) {
+				return { answer: "[Aborted]", iterations: iteration, totalSubQueries, completed: false };
+			}
+			const errMsg = apiErr instanceof Error ? apiErr.message : String(apiErr);
+			return {
+				answer: `[API Error] ${errMsg}`,
+				iterations: iteration,
+				totalSubQueries,
+				completed: false,
+			};
+		}
 
 		if (signal?.aborted) {
 			return { answer: "[Aborted]", iterations: iteration, totalSubQueries, completed: false };
 		}
 
-		// Surface API errors
+		// Surface API errors — bail immediately on unrecoverable errors
 		if ("errorMessage" in response && response.errorMessage) {
 			const errMsg = response.errorMessage as string;
-			if (errMsg.includes("authentication") || errMsg.includes("401")) {
+			const isAuth = errMsg.includes("authentication") || errMsg.includes("401");
+			const isQuota = errMsg.includes("quota") || errMsg.includes("billing") || errMsg.includes("429") || errMsg.includes("rate");
+			const isServer = errMsg.includes("500") || errMsg.includes("502") || errMsg.includes("503") || errMsg.includes("overloaded");
+
+			if (isAuth) {
 				return {
-					answer: `[API Authentication Error] ${errMsg}\n\nCheck your API key in .env or run /provider to reconfigure.`,
+					answer: `[API Error] ${errMsg}\n\nCheck your API key in .env or run /provider to reconfigure.`,
 					iterations: iteration,
 					totalSubQueries,
 					completed: false,
 				};
 			}
-			process.stderr.write(`[rlm] API error: ${errMsg}\n`);
+			if (isQuota) {
+				return {
+					answer: `[API Error] ${errMsg}\n\nCheck your plan and billing at your provider's dashboard.`,
+					iterations: iteration,
+					totalSubQueries,
+					completed: false,
+				};
+			}
+			if (isServer) {
+				return {
+					answer: `[API Error] ${errMsg}\n\nThe provider's API is currently unavailable. Try again later.`,
+					iterations: iteration,
+					totalSubQueries,
+					completed: false,
+				};
+			}
+			// Unknown API error — still bail, don't waste iterations
+			return {
+				answer: `[API Error] ${errMsg}`,
+				iterations: iteration,
+				totalSubQueries,
+				completed: false,
+			};
 		}
 
 		const rawResponseText = response.content
