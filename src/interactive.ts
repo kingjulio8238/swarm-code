@@ -239,44 +239,13 @@ function questionWithEsc(rlInstance: readline.Interface, promptText: string, opt
 	});
 }
 
-/** Prompt user for a provider's API key.
- *  If key already exists, shows masked version and allows Enter to keep it.
- *  Returns true (got key), false (empty input), or null (ESC pressed). */
+/** Prompt user for a provider's API key (only if not already set).
+ *  Returns true (got key / already set), false (empty input), or null (ESC pressed). */
 async function promptForProviderKey(
 	rlInstance: readline.Interface,
 	providerInfo: { name: string; env: string }
 ): Promise<boolean | null> {
-	const existing = process.env[providerInfo.env];
-	if (existing) {
-		// Show masked key, let user keep or replace
-		const masked = existing.slice(0, 4) + "●".repeat(Math.min(existing.length - 4, 12));
-		const rawKey = await questionWithEsc(rlInstance, `  ${c.cyan}${providerInfo.env}${c.reset} ${c.dim}[${masked}] Enter to keep:${c.reset} `, { secret: true });
-		if (rawKey === null) return null; // ESC
-		if (!rawKey) return true; // Enter → keep existing key
-		// Fall through to save new key
-		const key = rawKey.replace(/[\r\n\x00-\x1f]/g, "").trim();
-		if (!key) return true;
-		process.env[providerInfo.env] = key;
-		const credPath = path.join(RLM_HOME, "credentials");
-		try {
-			if (!fs.existsSync(RLM_HOME)) fs.mkdirSync(RLM_HOME, { recursive: true });
-			if (fs.existsSync(credPath)) {
-				const content = fs.readFileSync(credPath, "utf-8");
-				const filtered = content.split("\n").filter((l) => {
-					const t = l.trim();
-					if (t.startsWith("export ")) return !t.slice(7).startsWith(providerInfo.env + "=");
-					return !t.startsWith(providerInfo.env + "=");
-				}).join("\n");
-				fs.writeFileSync(credPath, filtered.endsWith("\n") ? filtered : filtered + "\n");
-			}
-			fs.appendFileSync(credPath, `${providerInfo.env}=${key}\n`);
-			try { fs.chmodSync(credPath, 0o600); } catch {}
-			console.log(`\n  ${c.green}✓${c.reset} ${providerInfo.name} key updated in ${c.dim}~/.rlm/credentials${c.reset}`);
-		} catch {
-			console.log(`\n  ${c.yellow}!${c.reset} Could not save key.`);
-		}
-		return true;
-	}
+	if (process.env[providerInfo.env]) return true;
 
 	const rawKey = await questionWithEsc(rlInstance, `  ${c.cyan}${providerInfo.env}:${c.reset} `, { secret: true });
 	if (rawKey === null) return null; // ESC
@@ -423,6 +392,7 @@ ${c.bold}Model & Provider${c.reset}
   ${c.cyan}/model${c.reset}                    List models for current provider
   ${c.cyan}/model${c.reset} <#|id>              Switch model by number or ID
   ${c.cyan}/provider${c.reset}                 Switch provider (Anthropic, OpenAI, Google)
+  ${c.cyan}/key${c.reset}                      Update an API key
 
 ${c.bold}Tools${c.reset}
   ${c.cyan}/trajectories${c.reset}             List saved runs
@@ -607,21 +577,12 @@ function wrapText(text: string, maxWidth: number): string[] {
 	return result;
 }
 
-function boxTop(title: string, color: string): string {
-	const inner = BOX_W - 2;
-	const t = ` ${title} `;
-	const right = Math.max(0, inner - t.length);
-	return `    ${color}╭${t}${"─".repeat(right)}╮${c.reset}`;
+function sectionHeader(title: string, color: string): string {
+	return `    ${color}${title}${c.reset}`;
 }
 
-function boxBottom(color: string): string {
-	return `    ${color}╰${"─".repeat(BOX_W - 2)}╯${c.reset}`;
-}
-
-function boxLine(text: string, color: string): string {
-	const stripped = text.replace(/\x1b\[[0-9;]*m/g, "");
-	const pad = Math.max(0, MAX_CONTENT_W - stripped.length);
-	return `    ${color}│${c.reset} ${text}${" ".repeat(pad)} ${color}│${c.reset}`;
+function sectionLine(text: string, color: string): string {
+	return `    ${color}│${c.reset} ${text}`;
 }
 
 function displayCode(code: string): void {
@@ -629,40 +590,37 @@ function displayCode(code: string): void {
 	const lineNumWidth = String(lines.length).length;
 	const codeMaxW = MAX_CONTENT_W - lineNumWidth - 1;
 
-	console.log(boxTop("Code", c.blue));
+	console.log(sectionHeader("Code", c.dim));
 	for (let i = 0; i < lines.length; i++) {
 		const wrapped = wrapText(lines[i], codeMaxW);
 		for (let j = 0; j < wrapped.length; j++) {
 			const prefix = j === 0
 				? `${c.dim}${String(i + 1).padStart(lineNumWidth)}${c.reset}`
 				: " ".repeat(lineNumWidth);
-			console.log(boxLine(`${prefix} ${c.cyan}${wrapped[j]}${c.reset}`, c.blue));
+			console.log(sectionLine(`${prefix} ${c.cyan}${wrapped[j]}${c.reset}`, c.dim));
 		}
 	}
-	console.log(boxBottom(c.blue));
 }
 
 function displayOutput(output: string): void {
 	const lines = output.split("\n").filter(l => l.trim() !== "");
 
-	console.log(boxTop("Output", c.green));
+	console.log(sectionHeader("Output", c.dim));
 	for (const line of lines) {
 		for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-			console.log(boxLine(`${c.green}${chunk}${c.reset}`, c.green));
+			console.log(sectionLine(`${c.green}${chunk}${c.reset}`, c.dim));
 		}
 	}
-	console.log(boxBottom(c.green));
 }
 
 function displayError(stderr: string): void {
 	const lines = stderr.split("\n").filter(l => l.trim() !== "");
-	console.log(boxTop("Error", c.red));
+	console.log(sectionHeader("Error", c.red));
 	for (const line of lines) {
 		for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-			console.log(boxLine(`${c.red}${chunk}${c.reset}`, c.red));
+			console.log(sectionLine(`${c.red}${chunk}${c.reset}`, c.red));
 		}
 	}
-	console.log(boxBottom(c.red));
 }
 
 function formatSize(chars: number): string {
@@ -1024,13 +982,12 @@ async function runQuery(query: string): Promise<void> {
 			const totalSec = ((Date.now() - startTime) / 1000).toFixed(1);
 
 			const answerLines = answer.split("\n");
-			console.log(boxTop(`✔ Response  ${c.dim}${totalSec}s`, c.green));
+			console.log(`\n  ${c.green}✔ Response${c.reset}  ${c.dim}${totalSec}s${c.reset}`);
 			for (const line of answerLines) {
 				for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-					console.log(boxLine(chunk, c.green));
+					console.log(sectionLine(chunk, c.green));
 				}
 			}
-			console.log(boxBottom(c.green));
 			console.log();
 		} catch (err: any) {
 			spinner.stop();
@@ -1100,10 +1057,8 @@ async function runQuery(query: string): Promise<void> {
 					};
 
 					const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-					const bar = "─".repeat(BOX_W - 2);
-					console.log(`  ${c.blue}${bar}${c.reset}`);
-					console.log(`  ${c.blue}${c.bold} Step ${info.iteration}${c.reset}${c.dim}/${info.maxIterations}${c.reset}  ${c.dim}${elapsed}s elapsed${c.reset}`);
-					console.log(`  ${c.blue}${bar}${c.reset}`);
+					console.log(`  ${c.dim}─────${c.reset}`);
+					console.log(`  ${c.bold}Step ${info.iteration}${c.reset}${c.dim}/${info.maxIterations}  ${elapsed}s${c.reset}`);
 					spinner.start("Generating code");
 				}
 
@@ -1172,13 +1127,12 @@ async function runQuery(query: string): Promise<void> {
 		const stats = `${result.iterations} step${result.iterations !== 1 ? "s" : ""} · ${result.totalSubQueries} sub-quer${result.totalSubQueries !== 1 ? "ies" : "y"} · ${totalSec}s`;
 
 		const answerLines = result.answer.split("\n");
-		console.log(boxTop(`✔ Result  ${c.dim}${stats}`, c.green));
+		console.log(`\n  ${c.green}✔ Result${c.reset}  ${c.dim}${stats}${c.reset}`);
 		for (const line of answerLines) {
 			for (const chunk of wrapText(line, MAX_CONTENT_W)) {
-				console.log(boxLine(chunk, c.green));
+				console.log(sectionLine(chunk, c.green));
 			}
 		}
-		console.log(boxBottom(c.green));
 		console.log();
 
 		// Save trajectory
@@ -1619,6 +1573,49 @@ async function interactive(): Promise<void> {
 						printStatusLine();
 					} else {
 						console.log(`  ${c.red}No models available for ${chosen.name}.${c.reset}`);
+					}
+					break;
+				}
+				case "key": {
+					// Update API key for a provider
+					const curProvider = currentProviderName || detectProvider();
+					console.log();
+					for (let i = 0; i < SETUP_PROVIDERS.length; i++) {
+						const p = SETUP_PROVIDERS[i];
+						const hasKey = process.env[p.env] ? `${c.green}✓${c.reset}` : `${c.dim}○${c.reset}`;
+						console.log(`  ${c.dim}${i + 1}${c.reset} ${hasKey} ${p.name} ${c.dim}(${p.label})${c.reset}`);
+					}
+					console.log();
+					const keyChoice = await questionWithEsc(rl, `  ${c.cyan}Update key for [1-${SETUP_PROVIDERS.length}]:${c.reset} ${c.dim}(ESC to cancel)${c.reset} `);
+					if (keyChoice === null || !keyChoice) break;
+					const keyIdx = parseInt(keyChoice, 10) - 1;
+					if (isNaN(keyIdx) || keyIdx < 0 || keyIdx >= SETUP_PROVIDERS.length) {
+						console.log(`  ${c.dim}Cancelled.${c.reset}`);
+						break;
+					}
+					const keyProvider = SETUP_PROVIDERS[keyIdx];
+					const newKey = await questionWithEsc(rl, `  ${c.cyan}${keyProvider.env}:${c.reset} `, { secret: true });
+					if (newKey === null || !newKey) break;
+					const sanitized = newKey.replace(/[\r\n\x00-\x1f]/g, "").trim();
+					if (!sanitized) break;
+					process.env[keyProvider.env] = sanitized;
+					const credPath = path.join(RLM_HOME, "credentials");
+					try {
+						if (!fs.existsSync(RLM_HOME)) fs.mkdirSync(RLM_HOME, { recursive: true });
+						if (fs.existsSync(credPath)) {
+							const content = fs.readFileSync(credPath, "utf-8");
+							const filtered = content.split("\n").filter((l) => {
+								const t = l.trim();
+								if (t.startsWith("export ")) return !t.slice(7).startsWith(keyProvider.env + "=");
+								return !t.startsWith(keyProvider.env + "=");
+							}).join("\n");
+							fs.writeFileSync(credPath, filtered.endsWith("\n") ? filtered : filtered + "\n");
+						}
+						fs.appendFileSync(credPath, `${keyProvider.env}=${sanitized}\n`);
+						try { fs.chmodSync(credPath, 0o600); } catch {}
+						console.log(`  ${c.green}✓${c.reset} ${keyProvider.name} key updated`);
+					} catch {
+						console.log(`  ${c.yellow}!${c.reset} Could not save key.`);
 					}
 					break;
 				}
