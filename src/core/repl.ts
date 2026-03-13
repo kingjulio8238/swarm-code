@@ -8,11 +8,35 @@
  * Extended from rlm-cli with thread_request and merge_request handlers.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
+
+/**
+ * Verify Python 3 is available. Throws a clear error if not found.
+ */
+function ensurePython(cmd: string): void {
+	try {
+		const version = execFileSync(cmd, ["--version"], {
+			encoding: "utf-8",
+			timeout: 5000,
+			stdio: ["ignore", "pipe", "pipe"],
+		}).trim();
+		const major = Number.parseInt(version.replace(/^Python\s*/, "").split(".")[0], 10);
+		if (major < 3) {
+			throw new Error(`swarm-code requires Python 3 but found ${version}. Install Python 3.x from https://python.org`);
+		}
+	} catch (err: any) {
+		if (err.code === "ENOENT") {
+			throw new Error(
+				`swarm-code requires Python 3 but "${cmd}" was not found on PATH. Install Python 3.x from https://python.org`,
+			);
+		}
+		throw err;
+	}
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -121,6 +145,7 @@ export class PythonRepl {
 		const runtimePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "runtime.py");
 
 		const pythonCmd = process.platform === "win32" ? "python" : "python3";
+		ensurePython(pythonCmd);
 
 		const homeDir = os.homedir();
 		this.proc = spawn(pythonCmd, [runtimePath], {
