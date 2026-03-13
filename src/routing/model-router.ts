@@ -20,6 +20,7 @@
 import type { SwarmConfig } from "../core/types.js";
 import type { ModelSlots } from "../config.js";
 import { getAvailableAgents } from "../agents/provider.js";
+import type { EpisodicMemory } from "../memory/episodic.js";
 
 // ── Agent capabilities ─────────────────────────────────────────────────────
 
@@ -195,6 +196,7 @@ export interface RouteResult {
 export async function routeTask(
 	task: string,
 	config: SwarmConfig,
+	memory?: EpisodicMemory,
 ): Promise<RouteResult> {
 	const complexity = classifyTaskComplexity(task);
 	const slot = classifyTaskSlot(task);
@@ -205,6 +207,9 @@ export async function routeTask(
 	const slotOverrides = config.model_slots || DEFAULT_MODEL_SLOTS;
 	const slotModel = slotOverrides[slot];
 
+	// Check episodic memory for past successful strategies
+	const memoryRecommendation = memory?.recommendStrategy(task);
+
 	// If no agents available, fall back to direct-llm
 	if (available.length === 0) {
 		return {
@@ -212,6 +217,17 @@ export async function routeTask(
 			model: slotModel || config.default_model,
 			slot,
 			reason: "no agent backends available, falling back to direct LLM",
+		};
+	}
+
+	// If episodic memory has a high-confidence recommendation, prefer it
+	if (memoryRecommendation && memoryRecommendation.confidence >= 0.5 &&
+		available.includes(memoryRecommendation.agent)) {
+		return {
+			agent: memoryRecommendation.agent,
+			model: slotModel || memoryRecommendation.model,
+			slot,
+			reason: `${slot}/${complexity} → ${memoryRecommendation.agent} (episodic memory, ${(memoryRecommendation.confidence * 100).toFixed(0)}% confidence)`,
 		};
 	}
 
@@ -240,6 +256,11 @@ export async function routeTask(
 				score += (slotPrefs.length - slotRank) * 2;
 			}
 
+			// Episodic memory boost — agents that worked well for similar tasks
+			if (memoryRecommendation && memoryRecommendation.agent === name) {
+				score += memoryRecommendation.confidence * 5;
+			}
+
 			// Complexity-cost alignment
 			if (complexity === "simple") {
 				// Prefer cheap + fast agents
@@ -252,10 +273,12 @@ export async function routeTask(
 				score += cap.costTier; // Higher cost often = more capable
 			}
 
-			// Select model: slot override > complexity-based default
+			// Select model: slot override > memory suggestion > complexity-based default
 			let model: string;
 			if (slotModel) {
 				model = slotModel;
+			} else if (memoryRecommendation && memoryRecommendation.agent === name && memoryRecommendation.model) {
+				model = memoryRecommendation.model;
 			} else {
 				switch (complexity) {
 					case "simple": model = cap.cheapModel; break;
@@ -269,12 +292,13 @@ export async function routeTask(
 		.sort((a, b) => b.score - a.score);
 
 	const best = scored[0];
+	const memNote = memoryRecommendation ? `, memory: ${memoryRecommendation.agent}` : "";
 
 	return {
 		agent: best.name,
 		model: best.model,
 		slot,
-		reason: `${slot}/${complexity} → ${best.name} (score: ${best.score})`,
+		reason: `${slot}/${complexity} → ${best.name} (score: ${best.score}${memNote})`,
 	};
 }
 

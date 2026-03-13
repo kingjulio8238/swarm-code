@@ -43,6 +43,9 @@ export interface SwarmConfig {
 	memory_dir: string;
 	thread_retries: number;
 	model_slots: ModelSlots;
+	thread_cache_persist: boolean;
+	thread_cache_dir: string;
+	thread_cache_ttl_hours: number;
 }
 
 // Also export as RlmConfig for backwards compat with forked modules
@@ -78,6 +81,9 @@ const DEFAULTS: SwarmConfig = {
 		reasoning: "",
 		planning: "",
 	},
+	thread_cache_persist: false,
+	thread_cache_dir: path.join(os.homedir(), ".swarm", "cache"),
+	thread_cache_ttl_hours: 24,
 };
 
 function parseYaml(text: string): Record<string, unknown> {
@@ -166,6 +172,9 @@ export function loadConfig(): SwarmConfig {
 						reasoning: str(parsed.model_slot_reasoning, DEFAULTS.model_slots.reasoning),
 						planning: str(parsed.model_slot_planning, DEFAULTS.model_slots.planning),
 					},
+					thread_cache_persist: bool(parsed.thread_cache_persist, DEFAULTS.thread_cache_persist),
+					thread_cache_dir: str(parsed.thread_cache_dir, DEFAULTS.thread_cache_dir),
+					thread_cache_ttl_hours: clamp(parsed.thread_cache_ttl_hours, 1, 720, DEFAULTS.thread_cache_ttl_hours),
 				};
 			} catch {
 				// Fall through to defaults

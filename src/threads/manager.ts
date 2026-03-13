@@ -24,6 +24,7 @@ import { getAgent } from "../agents/provider.js";
 import { WorktreeManager } from "../worktree/manager.js";
 import { compressResult } from "../compression/compressor.js";
 import { ThreadCache, type ThreadCacheStats } from "./cache.js";
+import type { EpisodicMemory } from "../memory/episodic.js";
 
 // ── Async Semaphore ─────────────────────────────────────────────────────────
 
@@ -146,6 +147,7 @@ export class ThreadManager {
 	private config: SwarmConfig;
 	private budget: BudgetTracker;
 	private threadCache: ThreadCache;
+	private episodicMemory?: EpisodicMemory;
 	private onThreadProgress?: ThreadProgressCallback;
 	private sessionAbort?: AbortSignal;
 	private threadAbortControllers: Map<string, AbortController> = new Map();
@@ -160,13 +162,23 @@ export class ThreadManager {
 		this.semaphore = new AsyncSemaphore(config.max_threads);
 		this.worktreeManager = new WorktreeManager(repoRoot, config.worktree_base_dir);
 		this.budget = new BudgetTracker(config.max_session_budget_usd, config.max_thread_budget_usd);
-		this.threadCache = new ThreadCache();
+		this.threadCache = new ThreadCache(
+			100,
+			config.thread_cache_persist ? config.thread_cache_dir : undefined,
+			config.thread_cache_ttl_hours,
+		);
 		this.onThreadProgress = onThreadProgress;
 		this.sessionAbort = sessionAbort;
 	}
 
+	/** Set the episodic memory store for recording thread outcomes. */
+	setEpisodicMemory(memory: EpisodicMemory): void {
+		this.episodicMemory = memory;
+	}
+
 	async init(): Promise<void> {
 		await this.worktreeManager.init();
+		await this.threadCache.init();
 	}
 
 	/**
@@ -404,6 +416,23 @@ export class ThreadManager {
 					cfg.agent.model || this.config.default_model,
 					result,
 				);
+
+				// Record episode in episodic memory (fire-and-forget)
+				// Only records if auto-routing is NOT active (swarm.ts records richer episodes with slot/complexity)
+				if (this.episodicMemory && !this.config.auto_model_selection) {
+					this.episodicMemory.record({
+						task: cfg.task,
+						agent: cfg.agent.backend || this.config.default_agent,
+						model: cfg.agent.model || this.config.default_model,
+						slot: "",
+						complexity: "",
+						success: true,
+						durationMs: result.durationMs,
+						estimatedCostUsd: estimatedCost,
+						filesChanged: filesChanged,
+						summary: compressed,
+					}).catch(() => {}); // Non-fatal
+				}
 			}
 
 			return result;

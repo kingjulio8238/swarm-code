@@ -32,7 +32,8 @@ import { randomBytes } from "node:crypto";
 import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
 import { mergeAllThreads, type MergeAllOptions } from "./worktree/merge.js";
 import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
-import { routeTask, describeAvailableAgents } from "./routing/model-router.js";
+import { routeTask, classifyTaskSlot, classifyTaskComplexity, describeAvailableAgents } from "./routing/model-router.js";
+import { EpisodicMemory } from "./memory/episodic.js";
 import type { ThreadProgressPhase } from "./core/types.js";
 import type { Api, Model } from "@mariozechner/pi-ai";
 
@@ -324,6 +325,15 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	const threadManager = new ThreadManager(args.dir, config, threadProgress, ac.signal);
 	await threadManager.init();
 
+	// Initialize episodic memory if enabled
+	let episodicMemory: EpisodicMemory | undefined;
+	if (config.episodic_memory_enabled) {
+		episodicMemory = new EpisodicMemory(config.memory_dir);
+		await episodicMemory.init();
+		threadManager.setEpisodicMemory(episodicMemory);
+		console.error(`  Memory:   ${episodicMemory.size} episodes loaded from ${config.memory_dir}`);
+	}
+
 	const abortAndExit = () => {
 		console.error("\nAborting...");
 		ac.abort();
@@ -362,6 +372,14 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			systemPrompt += "\n\n## DRY RUN MODE\nDo NOT call thread() or async_thread(). Instead, describe what threads you WOULD spawn (task, files, model). Call FINAL() with your execution plan.";
 		}
 
+		// Add episodic memory hints to system prompt
+		if (episodicMemory && episodicMemory.size > 0) {
+			const hints = episodicMemory.getStrategyHints(args.query);
+			if (hints) {
+				systemPrompt += `\n\n## Episodic Memory\n${hints}\nConsider these strategies when decomposing your task.`;
+			}
+		}
+
 		// Thread handler — wires Python thread() calls to ThreadManager
 		const threadHandler = async (
 			task: string,
@@ -372,14 +390,20 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 		) => {
 			let resolvedAgent = agentBackend || config.default_agent;
 			let resolvedModel = model || config.default_model;
+			let routeSlot = "";
+			let routeComplexity = "";
 
 			// Auto-routing: override agent/model if enabled and not explicitly specified
 			if (config.auto_model_selection && !agentBackend && !model) {
-				const route = await routeTask(task, config);
+				const route = await routeTask(task, config, episodicMemory);
 				resolvedAgent = route.agent;
 				resolvedModel = route.model;
+				routeSlot = route.slot;
+				routeComplexity = classifyTaskComplexity(task);
 				if (args.verbose) {
+					const memHints = episodicMemory?.getStrategyHints(task);
 					console.error(`  [router] ${route.reason} [slot: ${route.slot}]`);
+					if (memHints) console.error(`  [memory] ${memHints.split("\n")[1] || ""}`);
 				}
 			}
 
@@ -394,6 +418,23 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 				},
 				files,
 			});
+
+			// Record episode with slot/complexity metadata (supplements the
+			// generic recording in ThreadManager with routing-specific info)
+			if (episodicMemory && result.success && routeSlot) {
+				episodicMemory.record({
+					task,
+					agent: resolvedAgent,
+					model: resolvedModel,
+					slot: routeSlot,
+					complexity: routeComplexity,
+					success: true,
+					durationMs: result.durationMs,
+					estimatedCostUsd: result.estimatedCostUsd,
+					filesChanged: result.filesChanged,
+					summary: result.summary,
+				}).catch(() => {}); // Non-fatal
+			}
 
 			return {
 				result: result.summary,
@@ -466,6 +507,11 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 					`Cache: ${cacheStats.hits} hits, ${cacheStats.misses} misses` +
 					` | Saved: ${(cacheStats.totalSavedMs / 1000).toFixed(1)}s, $${cacheStats.totalSavedUsd.toFixed(4)}`,
 				);
+			}
+
+			// Report episodic memory stats
+			if (episodicMemory) {
+				console.error(`Memory: ${episodicMemory.size} episodes stored`);
 			}
 		}
 

@@ -56,11 +56,26 @@ worktree_base_dir: .swarm-worktrees
 # Automatically cleanup worktrees after session
 auto_cleanup_worktrees: true
 
-# Episodic memory (Phase 4)
+# ── Episodic memory ────────────────────────────────────────────────────────
+# Records successful thread strategies to disk for cross-session learning
+
+# Enable episodic memory
 episodic_memory_enabled: false
 
 # Memory storage directory
 memory_dir: ~/.swarm/memory
+
+# ── Thread cache persistence ──────────────────────────────────────────────
+# Extend subthread cache to survive across sessions
+
+# Enable disk persistence for thread cache
+thread_cache_persist: false
+
+# Cache storage directory
+thread_cache_dir: ~/.swarm/cache
+
+# Cache TTL in hours (expired entries auto-cleaned)
+thread_cache_ttl_hours: 24
 
 # Retry failed threads (0 = no retry, 1 = one retry, max 3)
 thread_retries: 1

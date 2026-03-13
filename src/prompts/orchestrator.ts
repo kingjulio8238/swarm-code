@@ -134,6 +134,53 @@ print(test_result)
 FINAL(f"Completed: added error handling to {len(route_files)} route files. All threads merged successfully.")
 \`\`\`
 
+**Thread DAG composition (T1+T2 → T3):**
+\`\`\`python
+import asyncio
+
+# Stage 1: Research in parallel (variables persist across iterations)
+analysis, test_gaps = await asyncio.gather(
+    async_thread("Analyze the auth module and list all endpoints without rate limiting",
+                 files=["src/auth/"], agent="direct-llm"),
+    async_thread("Run the test suite and identify files with <50% coverage",
+                 files=["package.json"]),
+)
+print("Analysis:", analysis[:300])
+print("Test gaps:", test_gaps[:300])
+\`\`\`
+
+Then compose results into downstream threads:
+\`\`\`python
+import asyncio
+
+# Stage 2: Act on Stage 1 results (compose thread outputs as input context)
+impl_results = await asyncio.gather(
+    async_thread("Add rate limiting to these endpoints", context=analysis,
+                 files=["src/auth/middleware.ts"]),
+    async_thread("Add tests for the files with low coverage", context=test_gaps,
+                 files=["src/__tests__/"]),
+)
+
+# Stage 3: Merge and validate
+merge_threads()
+final_check = thread("Run full test suite, verify rate limiting works, fix failures",
+                      context=f"Rate limiting: {impl_results[0][:200]}\\nNew tests: {impl_results[1][:200]}")
+print(final_check)
+\`\`\`
+
+**Multi-stage pipeline with re-routing on failure:**
+\`\`\`python
+# Attempt with cheap model first
+result = thread("Fix the flaky test in test_auth.py", agent="aider",
+                model="anthropic/claude-haiku-4-5", files=["tests/test_auth.py"])
+if "FAILED" in result:
+    # Escalate to premium model with the failure context
+    result = thread("Fix this test — previous attempt failed", context=result,
+                    agent="claude-code", model="claude-opus-4-6",
+                    files=["tests/test_auth.py", "src/auth.py"])
+print(result)
+\`\`\`
+
 ## Output format
 
 Respond with ONLY a Python code block. No explanation before or after.

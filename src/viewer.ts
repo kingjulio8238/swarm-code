@@ -48,6 +48,34 @@ interface TrajectoryData {
 	iterations: TrajectoryStep[];
 	result: { answer: string; iterations: number; totalSubQueries: number; completed: boolean } | null;
 	totalElapsedMs: number;
+	/** Swarm-specific: thread events recorded during the run. */
+	swarm?: SwarmTrajectoryData;
+}
+
+// ── Swarm trajectory types ─────────────────────────────────────────────────
+
+interface SwarmThreadEvent {
+	threadId: string;
+	task: string;
+	agent: string;
+	model: string;
+	slot?: string;
+	status: "completed" | "failed" | "cancelled" | "cache_hit";
+	filesChanged: string[];
+	durationMs: number;
+	estimatedCostUsd: number;
+	/** Which iteration spawned this thread. */
+	iteration: number;
+	/** IDs of threads whose output was passed as context (DAG edges). */
+	dependsOn?: string[];
+}
+
+interface SwarmTrajectoryData {
+	threads: SwarmThreadEvent[];
+	mergeEvents: Array<{ branch: string; success: boolean; message: string }>;
+	cacheStats: { hits: number; misses: number; savedMs: number; savedUsd: number };
+	episodeCount?: number;
+	totalCostUsd: number;
 }
 
 // ── ANSI helpers ────────────────────────────────────────────────────────────
@@ -253,7 +281,7 @@ async function pickFile(files: FileEntry[]): Promise<string> {
 
 // ── Rendering views ─────────────────────────────────────────────────────────
 
-type ViewMode = "overview" | "iteration" | "result" | "subqueries" | "subqueryDetail" | "llmInput" | "llmResponse" | "systemPrompt";
+type ViewMode = "overview" | "iteration" | "result" | "subqueries" | "subqueryDetail" | "llmInput" | "llmResponse" | "systemPrompt" | "swarm";
 
 interface ViewState {
 	mode: ViewMode;
@@ -363,7 +391,8 @@ function renderOverview(state: ViewState): void {
 
 	// Footer
 	W(hline("─", c.gray) + "\n");
-	W(`  ${c.dim}up/down${c.reset} select  ${c.dim}enter${c.reset} view  ${c.dim}r${c.reset} result  ${c.dim}q${c.reset} quit\n`);
+	const swarmHint = traj.swarm ? `  ${c.dim}t${c.reset} threads` : "";
+	W(`  ${c.dim}up/down${c.reset} select  ${c.dim}enter${c.reset} view  ${c.dim}r${c.reset} result${swarmHint}  ${c.dim}q${c.reset} quit\n`);
 }
 
 function buildIterationContent(step: TrajectoryStep, traj: TrajectoryData): string[] {
@@ -751,6 +780,94 @@ function renderSystemPrompt(state: ViewState): void {
 	W(`${c.dim}q${c.reset} quit\n`);
 }
 
+// ── Swarm view ──────────────────────────────────────────────────────────────
+
+function renderSwarmView(state: ViewState): void {
+	const { traj } = state;
+	const swarm = traj.swarm;
+
+	W(c.cursorHome, c.clearScreen, c.hideCursor);
+
+	W(`\n${hline("━", c.cyan)}\n`);
+	W(`${centeredHeader(`${c.bold}${c.white}Swarm Thread DAG${c.reset}`, c.cyan)}\n`);
+	W(`${hline("━", c.cyan)}\n\n`);
+
+	if (!swarm || swarm.threads.length === 0) {
+		W(`  ${c.dim}No swarm thread data in this trajectory.${c.reset}\n`);
+		W(`  ${c.dim}(Run in swarm mode to generate thread data)${c.reset}\n`);
+	} else {
+		// Summary stats
+		const completed = swarm.threads.filter(t => t.status === "completed").length;
+		const failed = swarm.threads.filter(t => t.status === "failed").length;
+		const cached = swarm.threads.filter(t => t.status === "cache_hit").length;
+		const totalDuration = swarm.threads.reduce((s, t) => s + t.durationMs, 0);
+
+		kvLine("Threads    ", `${swarm.threads.length} total (${completed} completed, ${failed} failed, ${cached} cached)`);
+		kvLine("Cost       ", `$${swarm.totalCostUsd.toFixed(4)}`);
+		kvLine("Duration   ", `${(totalDuration / 1000).toFixed(1)}s aggregate`);
+		if (swarm.cacheStats.hits > 0) {
+			kvLine("Cache      ", `${swarm.cacheStats.hits} hits, saved ${(swarm.cacheStats.savedMs / 1000).toFixed(1)}s / $${swarm.cacheStats.savedUsd.toFixed(4)}`);
+		}
+		if (swarm.episodeCount !== undefined) {
+			kvLine("Episodes   ", `${swarm.episodeCount} in memory`);
+		}
+		W(`\n`);
+
+		// Thread DAG — group by iteration
+		const byIteration: Map<number, SwarmThreadEvent[]> = new Map();
+		for (const t of swarm.threads) {
+			const group = byIteration.get(t.iteration) || [];
+			group.push(t);
+			byIteration.set(t.iteration, group);
+		}
+
+		const iterations = [...byIteration.keys()].sort((a, b) => a - b);
+		for (const iter of iterations) {
+			const threads = byIteration.get(iter)!;
+			W(`  ${c.cyan}${c.bold}Iteration ${iter}${c.reset}\n`);
+
+			for (const t of threads) {
+				const tag = t.threadId.slice(0, 8);
+				const statusColor = t.status === "completed" ? c.green
+					: t.status === "cache_hit" ? c.yellow
+					: t.status === "failed" ? c.red
+					: c.gray;
+				const statusLabel = t.status === "cache_hit" ? "CACHED" : t.status.toUpperCase();
+				const cost = `$${t.estimatedCostUsd.toFixed(4)}`;
+				const duration = `${(t.durationMs / 1000).toFixed(1)}s`;
+				const slot = t.slot ? ` [${t.slot}]` : "";
+				const deps = t.dependsOn?.length
+					? ` ← ${t.dependsOn.map(d => d.slice(0, 8)).join(", ")}`
+					: "";
+
+				W(`    ${c.dim}${tag}${c.reset} ${statusColor}${statusLabel}${c.reset}`);
+				W(` ${c.dim}${duration} ${cost}${c.reset}${slot}`);
+				W(` ${t.agent}/${c.bold}${t.model}${c.reset}${deps}\n`);
+				W(`    ${c.dim}  └─${c.reset} ${t.task.slice(0, 70)}${t.task.length > 70 ? "..." : ""}\n`);
+
+				if (t.filesChanged.length > 0) {
+					W(`    ${c.dim}     ${t.filesChanged.length} file${t.filesChanged.length !== 1 ? "s" : ""}: ${t.filesChanged.slice(0, 3).join(", ")}${t.filesChanged.length > 3 ? "..." : ""}${c.reset}\n`);
+				}
+			}
+
+			W(`  ${c.dim}  |${c.reset}\n`);
+		}
+
+		// Merge events
+		if (swarm.mergeEvents.length > 0) {
+			W(`  ${c.magenta}${c.bold}Merge Results${c.reset}\n`);
+			for (const m of swarm.mergeEvents) {
+				const icon = m.success ? `${c.green}✓${c.reset}` : `${c.red}✗${c.reset}`;
+				W(`    ${icon} ${m.branch}: ${m.message}\n`);
+			}
+		}
+	}
+
+	W(`\n${hline("─", c.gray)}\n`);
+	W(`  ${c.dim}esc${c.reset} back  `);
+	W(`${c.dim}q${c.reset} quit\n`);
+}
+
 // ── Minimal syntax highlighting ─────────────────────────────────────────────
 
 function syntaxHighlight(code: string): string {
@@ -849,6 +966,9 @@ async function main(): Promise<void> {
 			case "systemPrompt":
 				renderSystemPrompt(state);
 				break;
+			case "swarm":
+				renderSwarmView(state);
+				break;
 		}
 	}
 
@@ -874,6 +994,8 @@ async function main(): Promise<void> {
 					state.scrollY = 0;
 				} else if (key === "r") {
 					state.mode = "result";
+				} else if (key === "t" && traj.swarm) {
+					state.mode = "swarm";
 				} else if (key === "q" || key === "\x03") {
 					W(c.showCursor, "\n");
 					process.exit(0);
@@ -973,6 +1095,15 @@ async function main(): Promise<void> {
 			case "systemPrompt":
 				if (key === "\x1b[D" || key === "\x1b" || key === "b") {
 					state.mode = "iteration";
+				} else if (key === "q" || key === "\x03") {
+					W(c.showCursor, "\n");
+					process.exit(0);
+				}
+				break;
+
+			case "swarm":
+				if (key === "\x1b[D" || key === "\x1b" || key === "b") {
+					state.mode = "overview";
 				} else if (key === "q" || key === "\x03") {
 					W(c.showCursor, "\n");
 					process.exit(0);
