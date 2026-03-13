@@ -109,8 +109,8 @@ function extractFromParsed(parsed: OpenCodeJsonOutput): {
 	let usage: import("../core/types.js").TokenUsage | undefined;
 	const u = (parsed.usage || parsed.total_usage) as Record<string, number | undefined> | undefined;
 	if (u) {
-		const inputTokens = u.input_tokens || u.prompt_tokens || 0;
-		const outputTokens = u.output_tokens || u.completion_tokens || 0;
+		const inputTokens = u.input_tokens ?? u.prompt_tokens ?? 0;
+		const outputTokens = u.output_tokens ?? u.completion_tokens ?? 0;
 		if (inputTokens > 0 || outputTokens > 0) {
 			usage = {
 				inputTokens,
@@ -163,12 +163,14 @@ interface ManagedServer {
  */
 class OpenCodeServerPool {
 	private servers: Map<string, ManagedServer> = new Map();
+	private pendingStarts: Map<string, Promise<string | null>> = new Map();
 	private nextPort = 14096; // Start from a high port to avoid conflicts
 	private shuttingDown = false;
 
 	/**
 	 * Get or create a server for the given working directory.
 	 * Returns the server URL if successful, null if server mode is unavailable.
+	 * Uses pendingStarts to prevent race conditions from concurrent getServer() calls.
 	 */
 	async getServer(cwd: string): Promise<string | null> {
 		if (this.shuttingDown) return null;
@@ -189,7 +191,15 @@ class OpenCodeServerPool {
 			}
 		}
 
-		return this.startServer(cwd);
+		// Prevent concurrent startServer for the same cwd
+		const pending = this.pendingStarts.get(cwd);
+		if (pending) return pending;
+
+		const startPromise = this.startServer(cwd).finally(() => {
+			this.pendingStarts.delete(cwd);
+		});
+		this.pendingStarts.set(cwd, startPromise);
+		return startPromise;
 	}
 
 	private async startServer(cwd: string): Promise<string | null> {
@@ -325,7 +335,7 @@ async function runViaHttpApi(
 	task: string,
 	model?: string,
 	signal?: AbortSignal,
-): Promise<{ output: string; filesChanged: string[]; sessionId?: string } | null> {
+): Promise<{ output: string; filesChanged: string[]; sessionId?: string; usage?: import("../core/types.js").TokenUsage } | null> {
 	try {
 		// 1. Create session
 		const sessionRes = await httpPost(`${serverUrl}/session`, {});
@@ -367,7 +377,22 @@ async function runViaHttpApi(
 			if (!output) output = info.content;
 		}
 
-		return { output, filesChanged: [...new Set(filesChanged)], sessionId: sessionId as string };
+		// Extract token usage from response (may be in usage, total_usage, or info.usage)
+		let usage: import("../core/types.js").TokenUsage | undefined;
+		const u = (msgRes.usage ?? msgRes.total_usage ?? (info as Record<string, unknown> | undefined)?.usage) as Record<string, number | undefined> | undefined;
+		if (u) {
+			const inputTokens = u.input_tokens ?? u.prompt_tokens ?? 0;
+			const outputTokens = u.output_tokens ?? u.completion_tokens ?? 0;
+			if (inputTokens > 0 || outputTokens > 0) {
+				usage = {
+					inputTokens,
+					outputTokens,
+					totalTokens: u.total_tokens ?? (inputTokens + outputTokens),
+				};
+			}
+		}
+
+		return { output, filesChanged: [...new Set(filesChanged)], sessionId: sessionId as string, usage };
 	} catch {
 		return null;
 	}
@@ -392,6 +417,12 @@ function httpPost(url: string, body: Record<string, unknown>, signal?: AbortSign
 			let responseBody = "";
 			res.on("data", (d) => { responseBody += d; });
 			res.on("end", () => {
+				// Reject non-2xx status codes
+				const status = res.statusCode ?? 0;
+				if (status < 200 || status >= 300) {
+					resolve(null);
+					return;
+				}
 				try {
 					resolve(JSON.parse(responseBody));
 				} catch {
@@ -604,6 +635,7 @@ const openCodeProvider: AgentProvider = {
 							filesChanged: apiResult.filesChanged,
 							diff: "",
 							durationMs: Date.now() - startTime,
+							usage: apiResult.usage,
 						};
 					}
 

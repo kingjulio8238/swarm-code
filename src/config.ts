@@ -125,7 +125,9 @@ function parseYaml(text: string): Record<string, unknown> {
 
 export function loadConfig(): SwarmConfig {
 	// Search order: cwd swarm_config, cwd rlm_config, package root swarm_config, package root rlm_config
+	// User prefs (~/.swarm/config.yaml) are overlaid on top of the first found project config
 	const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+	const userConfigPath = path.join(os.homedir(), ".swarm", "config.yaml");
 	const candidates = [
 		path.resolve(process.cwd(), "swarm_config.yaml"),
 		path.resolve(process.cwd(), "rlm_config.yaml"),
@@ -137,7 +139,16 @@ export function loadConfig(): SwarmConfig {
 		if (fs.existsSync(configPath)) {
 			try {
 				const raw = fs.readFileSync(configPath, "utf-8");
-				const parsed = parseYaml(raw);
+				let parsed = parseYaml(raw);
+
+				// Overlay user preferences from ~/.swarm/config.yaml
+				if (fs.existsSync(userConfigPath)) {
+					try {
+						const userRaw = fs.readFileSync(userConfigPath, "utf-8");
+						const userParsed = parseYaml(userRaw);
+						parsed = { ...parsed, ...userParsed };
+					} catch { /* ignore malformed user config */ }
+				}
 				const clamp = (v: unknown, min: number, max: number, def: number) =>
 					typeof v === "number" && isFinite(v) ? Math.max(min, Math.min(max, Math.round(v))) : def;
 				const str = (v: unknown, def: string) =>

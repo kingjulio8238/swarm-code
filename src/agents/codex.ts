@@ -66,18 +66,21 @@ interface CodexJsonEvent {
 	file_path?: string;
 }
 
-/** Parse JSONL output to extract result and file changes. */
+/** Parse JSONL output to extract result, file changes, and token usage. */
 function parseCodexJsonl(stdout: string): {
 	output: string;
 	filesChanged: string[];
 	success: boolean;
 	error?: string;
+	usage?: import("../core/types.js").TokenUsage;
 } {
 	const lines = stdout.trim().split("\n").filter(Boolean);
 	let output = "";
 	const filesChanged: string[] = [];
 	let success = true;
 	let error: string | undefined;
+	let totalInput = 0;
+	let totalOutput = 0;
 
 	for (const line of lines) {
 		try {
@@ -98,12 +101,27 @@ function parseCodexJsonl(stdout: string): {
 					filesChanged.push(event.file_path);
 				}
 			}
+
+			// Accumulate token usage from events
+			if (event.usage) {
+				totalInput += event.usage.input_tokens ?? 0;
+				totalOutput += event.usage.output_tokens ?? 0;
+			}
 		} catch {
 			// Non-JSON line — ignore
 		}
 	}
 
-	return { output, filesChanged: [...new Set(filesChanged)], success, error };
+	let usage: import("../core/types.js").TokenUsage | undefined;
+	if (totalInput > 0 || totalOutput > 0) {
+		usage = {
+			inputTokens: totalInput,
+			outputTokens: totalOutput,
+			totalTokens: totalInput + totalOutput,
+		};
+	}
+
+	return { output, filesChanged: [...new Set(filesChanged)], success, error, usage };
 }
 
 const codexProvider: AgentProvider = {
@@ -193,6 +211,7 @@ const codexProvider: AgentProvider = {
 					diff: "", // Diff is captured separately by worktree manager
 					durationMs,
 					error: parsed.error || (code !== 0 ? `codex exited with code ${code}${stderr ? `: ${stderr.slice(0, 500)}` : ""}` : undefined),
+					usage: parsed.usage,
 				});
 			});
 

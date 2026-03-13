@@ -221,7 +221,6 @@ const RETRYABLE_PATTERNS = [
 
 /** Patterns that indicate permanent/fatal errors (don't retry). */
 const FATAL_PATTERNS = [
-	/not found/i,
 	/authentication/i,
 	/unauthorized/i,
 	/forbidden/i,
@@ -253,27 +252,45 @@ function backoffDelay(attempt: number, baseMs: number = 1000): number {
 
 /**
  * Pick an alternative agent/model combo for retry.
- * Avoids the agent that just failed and prefers agents that are available.
+ * Avoids the agent that just failed and prefers agents with different default models.
+ * Uses attempt number to cycle through alternatives on subsequent retries.
  */
 function pickAlternativeAgent(
 	failedAgent: string,
 	failedModel: string,
 	config: SwarmConfig,
+	attempt: number = 1,
 ): { agent: string; model: string } | null {
 	const available = listAgents().filter(name => name !== failedAgent && name !== "mock");
 	if (available.length === 0) return null;
 
-	// Try agents in capability order, preferring different ones
+	// Build candidates, preferring agents with different default models
+	const candidates: Array<{ agent: string; model: string }> = [];
 	for (const name of available) {
 		const cap = AGENT_CAPABILITIES[name];
-		if (!cap) continue;
-
-		// Use the default model for the fallback agent
-		return { agent: name, model: cap.defaultModel };
+		if (cap && cap.defaultModel !== failedModel) {
+			candidates.push({ agent: name, model: cap.defaultModel });
+		}
+	}
+	// Also include agents with same model (but different agent) as lower priority
+	for (const name of available) {
+		const cap = AGENT_CAPABILITIES[name];
+		if (cap && cap.defaultModel === failedModel) {
+			candidates.push({ agent: name, model: cap.defaultModel });
+		}
+	}
+	// If no capabilities known, add all available with failedModel
+	if (candidates.length === 0) {
+		for (const name of available) {
+			candidates.push({ agent: name, model: failedModel });
+		}
 	}
 
-	// If no capabilities known, just pick the first available with current model
-	return { agent: available[0], model: failedModel };
+	if (candidates.length === 0) return null;
+
+	// Cycle through candidates based on attempt number
+	const idx = (attempt - 1) % candidates.length;
+	return candidates[idx];
 }
 
 // ── Thread Manager ──────────────────────────────────────────────────────────
@@ -352,7 +369,7 @@ export class ThreadManager {
 			};
 		}
 
-		// Check budget
+		// Preliminary budget check (definitive check happens inside semaphore)
 		const model = threadConfig.agent.model || this.config.default_model;
 		const budgetCheck = this.budget.canAfford(model);
 		if (!budgetCheck.allowed) {
@@ -413,15 +430,24 @@ export class ThreadManager {
 			state.attempt = attempt;
 
 			if (attempt > 1) {
-				// Exponential backoff before retry
+				// Exponential backoff before retry (abort-aware)
 				const delay = backoffDelay(attempt - 1);
 				state.phase = "retrying";
 				this.onThreadProgress?.(threadId, "retrying",
 					`attempt ${attempt}/${maxAttempts}, backoff ${(delay / 1000).toFixed(1)}s`);
 
-				await new Promise((r) => setTimeout(r, delay));
+				// Race the delay against the abort signal so cancellation is immediate
+				await new Promise<void>((resolve) => {
+					const timer = setTimeout(resolve, delay);
+					if (threadAc.signal.aborted) {
+						clearTimeout(timer);
+						resolve();
+						return;
+					}
+					const onAbort = () => { clearTimeout(timer); resolve(); };
+					threadAc.signal.addEventListener("abort", onAbort, { once: true });
+				});
 
-				// Check abort after backoff
 				if (threadAc.signal.aborted) break;
 			}
 
@@ -445,7 +471,7 @@ export class ThreadManager {
 			if (attempt < maxAttempts) {
 				const currentAgent = currentConfig.agent.backend || this.config.default_agent;
 				const currentModel = currentConfig.agent.model || this.config.default_model;
-				const alt = pickAlternativeAgent(currentAgent, currentModel, this.config);
+				const alt = pickAlternativeAgent(currentAgent, currentModel, this.config, attempt);
 
 				if (alt) {
 					currentConfig = {
@@ -486,6 +512,23 @@ export class ThreadManager {
 				state.phase = "cancelled";
 				state.completedAt = Date.now();
 				return this.failResult(state, "Thread cancelled before start");
+			}
+
+			// Definitive budget check inside semaphore (prevents race condition)
+			const threadModel = threadConfig.agent.model || this.config.default_model;
+			const budgetCheck = this.budget.canAfford(threadModel);
+			if (!budgetCheck.allowed) {
+				state.status = "failed";
+				state.phase = "failed";
+				state.completedAt = Date.now();
+				return {
+					success: false,
+					summary: `Budget exceeded: ${budgetCheck.reason}`,
+					filesChanged: [],
+					diffStats: "",
+					durationMs: 0,
+					estimatedCostUsd: 0,
+				};
 			}
 
 			state.status = "running";
@@ -633,6 +676,11 @@ export class ThreadManager {
 			state.error = errorMsg;
 			state.completedAt = Date.now();
 			this.onThreadProgress?.(threadId, "failed", errorMsg.slice(0, 100));
+
+			// Record estimated cost for failed threads (agent may have consumed tokens before failure)
+			const errModel = threadConfig.agent.model || this.config.default_model;
+			const { cost } = this.budget.recordCost(threadId, errModel);
+			state.estimatedCostUsd = cost;
 
 			// Cleanup worktree on failure
 			await this.cleanupWorktree(threadId);

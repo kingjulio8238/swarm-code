@@ -187,6 +187,20 @@ const claudeCodeProvider: AgentProvider = {
 
 				const parsed = extractJson(stdout);
 				if (parsed) {
+					// Extract token usage from Claude Code's structured output
+					let usage: import("../core/types.js").TokenUsage | undefined;
+					if (parsed.usage) {
+						const inputTokens = parsed.usage.input_tokens ?? 0;
+						const outputTokens = parsed.usage.output_tokens ?? 0;
+						if (inputTokens > 0 || outputTokens > 0) {
+							usage = {
+								inputTokens,
+								outputTokens,
+								totalTokens: inputTokens + outputTokens,
+							};
+						}
+					}
+
 					if (parsed.is_error) {
 						doResolve({
 							success: false,
@@ -195,6 +209,7 @@ const claudeCodeProvider: AgentProvider = {
 							diff: "",
 							durationMs: parsed.duration_ms || durationMs,
 							error: parsed.result || `Claude Code error: ${parsed.subtype}`,
+							usage,
 						});
 						return;
 					}
@@ -205,6 +220,7 @@ const claudeCodeProvider: AgentProvider = {
 						filesChanged: [], // Diff is captured separately by worktree manager
 						diff: "",
 						durationMs: parsed.duration_ms || durationMs,
+						usage,
 					});
 					return;
 				}
