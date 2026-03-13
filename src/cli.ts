@@ -28,10 +28,10 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 function usage(): never {
 	console.error(
 		`
-swarm run — Recursive Language Model CLI (arXiv:2512.24601)
+swarm run — Text processing mode (RLM)
 
 USAGE
-  rlm run [OPTIONS] "<query>"
+  swarm run [OPTIONS] "<query>"
 
 OPTIONS
   --model <id>     Model ID (default: RLM_MODEL from .env)
@@ -41,9 +41,9 @@ OPTIONS
   --verbose        Show iteration progress
 
 EXAMPLES
-  rlm run --file big.txt "List all classes"
-  curl -s https://example.com/large.py | rlm run --stdin "Summarize"
-  rlm run --url https://raw.githubusercontent.com/.../typing.py "Count public classes"
+  swarm run --file big.txt "List all classes"
+  curl -s https://example.com/large.py | swarm run --stdin "Summarize"
+  swarm run --url https://raw.githubusercontent.com/.../typing.py "Count public classes"
 `.trim(),
 	);
 	process.exit(1);
