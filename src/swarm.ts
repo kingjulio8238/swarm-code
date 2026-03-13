@@ -37,6 +37,17 @@ import { EpisodicMemory } from "./memory/episodic.js";
 import type { ThreadProgressPhase } from "./core/types.js";
 import type { Api, Model } from "@mariozechner/pi-ai";
 
+// UI system
+import { Spinner } from "./ui/spinner.js";
+import { ThreadDashboard } from "./ui/dashboard.js";
+import { renderBanner } from "./ui/banner.js";
+import { renderSummary, type SessionSummary } from "./ui/summary.js";
+import {
+	setLogLevel, setJsonMode, isJsonMode,
+	logInfo, logSuccess, logWarn, logError, logVerbose,
+	logDim, logRouter, logAnswer, logJson,
+} from "./ui/log.js";
+
 // ── Arg parsing ─────────────────────────────────────────────────────────────
 
 interface SwarmArgs {
@@ -46,6 +57,8 @@ interface SwarmArgs {
 	dryRun: boolean;
 	maxBudget: number | null;
 	verbose: boolean;
+	quiet: boolean;
+	json: boolean;
 	autoRoute: boolean;
 	query: string;
 }
@@ -57,6 +70,8 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 	let dryRun = false;
 	let maxBudget: number | null = null;
 	let verbose = false;
+	let quiet = false;
+	let json = false;
 	let autoRoute = false;
 	const positional: string[] = [];
 
@@ -75,21 +90,26 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 			maxBudget = isFinite(parsed) && parsed > 0 ? parsed : null;
 		} else if (arg === "--verbose") {
 			verbose = true;
+		} else if (arg === "--quiet" || arg === "-q") {
+			quiet = true;
+		} else if (arg === "--json") {
+			json = true;
 		} else if (arg === "--auto-route") {
 			autoRoute = true;
-		} else if (!arg.startsWith("--")) {
+		} else if (arg.startsWith("--")) {
+			logWarn(`Unknown flag: ${arg}`);
+		} else {
 			positional.push(arg);
 		}
 	}
 
 	if (!dir) {
-		console.error("Error: --dir <path> is required for swarm mode");
+		logError("--dir <path> is required for swarm mode", 'Usage: swarm --dir ./project "your task"');
 		process.exit(1);
 	}
 
 	if (positional.length === 0) {
-		console.error("Error: query argument is required");
-		console.error('Usage: swarm --dir ./project "your task description"');
+		logError("Query argument is required", 'Usage: swarm --dir ./project "your task description"');
 		process.exit(1);
 	}
 
@@ -101,6 +121,8 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 		maxBudget,
 		autoRoute,
 		verbose,
+		quiet,
+		json,
 		query: positional.join(" "),
 	};
 }
@@ -132,7 +154,6 @@ function scanDirectory(dir: string, maxFiles: number = 200, maxTotalSize: number
 			return;
 		}
 
-		// Sort for deterministic output
 		entries.sort((a, b) => a.name.localeCompare(b.name));
 
 		for (const entry of entries) {
@@ -149,11 +170,10 @@ function scanDirectory(dir: string, maxFiles: number = 200, maxTotalSize: number
 				const fullPath = path.join(currentDir, entry.name);
 				try {
 					const stat = fs.statSync(fullPath);
-					if (stat.size > 100 * 1024) continue; // Skip files > 100KB
+					if (stat.size > 100 * 1024) continue;
 					if (stat.size === 0) continue;
 
 					const content = fs.readFileSync(fullPath, "utf-8");
-					// Check for binary content
 					if (content.includes("\0")) continue;
 
 					const relPath = path.relative(dir, fullPath);
@@ -168,7 +188,6 @@ function scanDirectory(dir: string, maxFiles: number = 200, maxTotalSize: number
 
 	walk(dir, 0);
 
-	// Build context string
 	const parts: string[] = [];
 	parts.push(`Codebase: ${path.basename(dir)}`);
 	parts.push(`Files: ${files.length}`);
@@ -201,7 +220,6 @@ function resolveModel(modelId: string): { model: Model<Api>; provider: string } 
 	let model: Model<Api> | undefined;
 	let resolvedProvider = "";
 
-	// First pass: known providers with keys
 	for (const provider of getProviders()) {
 		if (!knownProviders.has(provider)) continue;
 		const key = providerKeys[provider]!;
@@ -216,7 +234,6 @@ function resolveModel(modelId: string): { model: Model<Api>; provider: string } 
 		if (model) break;
 	}
 
-	// Second pass: all providers
 	if (!model) {
 		for (const provider of getProviders()) {
 			if (knownProviders.has(provider)) continue;
@@ -231,7 +248,6 @@ function resolveModel(modelId: string): { model: Model<Api>; provider: string } 
 		}
 	}
 
-	// Fallback: pick any model from a provider that has a key
 	if (!model) {
 		for (const [prov, envKey] of Object.entries(providerKeys)) {
 			if (!process.env[envKey]) continue;
@@ -243,7 +259,7 @@ function resolveModel(modelId: string): { model: Model<Api>; provider: string } 
 					if (m.id === fallbackId) {
 						model = m;
 						resolvedProvider = prov;
-						console.error(`Note: using ${fallbackId} (${prov}) — model "${modelId}" not found`);
+						logWarn(`Using ${fallbackId} (${prov}) — model "${modelId}" not found`);
 						break;
 					}
 				}
@@ -263,6 +279,11 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	const args = parseSwarmArgs(rawArgs);
 	const config = loadConfig();
 
+	// Configure UI
+	if (args.json) setJsonMode(true);
+	if (args.quiet) setLogLevel("quiet");
+	else if (args.verbose) setLogLevel("verbose");
+
 	// Override config with CLI args
 	if (args.agent) config.default_agent = args.agent;
 	if (args.maxBudget !== null) config.max_session_budget_usd = args.maxBudget;
@@ -270,72 +291,74 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 
 	// Verify target directory
 	if (!fs.existsSync(args.dir)) {
-		console.error(`Error: directory "${args.dir}" does not exist`);
+		logError(`Directory "${args.dir}" does not exist`);
 		process.exit(1);
 	}
 
 	// Resolve orchestrator model
 	const resolved = resolveModel(args.orchestratorModel);
 	if (!resolved) {
-		console.error(`Error: could not find model "${args.orchestratorModel}"`);
-		console.error("Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY in your .env file");
+		logError(
+			`Could not find model "${args.orchestratorModel}"`,
+			"Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY in your .env file",
+		);
 		process.exit(1);
 	}
-
-	console.error(`\x1b[36m╔══════════════════════════════════════════╗`);
-	console.error(`║           swarm — coding agent           ║`);
-	console.error(`╚══════════════════════════════════════════╝\x1b[0m`);
-	console.error(`  Directory: ${args.dir}`);
-	console.error(`  Model:     ${resolved.model.id} (${resolved.provider})`);
-	console.error(`  Agent:     ${config.default_agent}`);
-	console.error(`  Routing:   ${config.auto_model_selection ? "auto" : "orchestrator-driven"}`);
-	console.error(`  Query:     ${args.query}`);
-	if (args.dryRun) console.error(`  Mode:      DRY RUN (no threads will be spawned)`);
-	console.error(`---`);
-
-	// Scan codebase
-	console.error("Scanning codebase...");
-	const context = scanDirectory(args.dir);
-	console.error(`Context: ${(context.length / 1024).toFixed(1)}KB`);
-
-	// Start REPL
-	const repl = new PythonRepl();
-	const ac = new AbortController();
-
-	// Progress callback for thread events
-	const threadProgress: ThreadProgressCallback = (threadId, phase, detail) => {
-		const tag = threadId.slice(0, 8);
-		const phaseLabels: Record<ThreadProgressPhase, string> = {
-			queued: "queued",
-			creating_worktree: "creating worktree",
-			agent_running: "running agent",
-			capturing_diff: "capturing diff",
-			compressing: "compressing",
-			completed: "completed",
-			failed: "FAILED",
-			cancelled: "cancelled",
-			retrying: "retrying",
-		};
-		const label = phaseLabels[phase] || phase;
-		const suffix = detail ? ` (${detail})` : "";
-		console.error(`  [thread:${tag}] ${label}${suffix}`);
-	};
-
-	// Initialize thread manager with session abort signal
-	const threadManager = new ThreadManager(args.dir, config, threadProgress, ac.signal);
-	await threadManager.init();
 
 	// Initialize episodic memory if enabled
 	let episodicMemory: EpisodicMemory | undefined;
 	if (config.episodic_memory_enabled) {
 		episodicMemory = new EpisodicMemory(config.memory_dir);
 		await episodicMemory.init();
+	}
+
+	// Render banner
+	renderBanner({
+		dir: args.dir,
+		model: resolved.model.id,
+		provider: resolved.provider,
+		agent: config.default_agent,
+		routing: config.auto_model_selection ? "auto" : "orchestrator-driven",
+		query: args.query,
+		dryRun: args.dryRun,
+		memorySize: episodicMemory?.size,
+	});
+
+	// Scan codebase with spinner
+	const spinner = new Spinner();
+	spinner.start("scanning codebase");
+	const context = scanDirectory(args.dir);
+	spinner.stop();
+	logSuccess(`Scanned codebase — ${(context.length / 1024).toFixed(1)}KB context`);
+
+	// Start REPL
+	const repl = new PythonRepl();
+	const ac = new AbortController();
+
+	// Thread dashboard for live status
+	const dashboard = new ThreadDashboard();
+
+	// Progress callback for thread events
+	const threadProgress: ThreadProgressCallback = (threadId, phase, detail) => {
+		if (phase === "completed" || phase === "failed" || phase === "cancelled") {
+			dashboard.complete(threadId, phase, detail);
+		} else {
+			dashboard.update(threadId, phase, detail);
+		}
+	};
+
+	// Initialize thread manager
+	const threadManager = new ThreadManager(args.dir, config, threadProgress, ac.signal);
+	await threadManager.init();
+
+	if (episodicMemory) {
 		threadManager.setEpisodicMemory(episodicMemory);
-		console.error(`  Memory:   ${episodicMemory.size} episodes loaded from ${config.memory_dir}`);
 	}
 
 	const abortAndExit = () => {
-		console.error("\nAborting...");
+		spinner.stop();
+		dashboard.clear();
+		logWarn("Aborting...");
 		ac.abort();
 	};
 	process.on("SIGINT", abortAndExit);
@@ -357,7 +380,6 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 						timestamp: Date.now(),
 					}],
 				});
-				// Extract text content from AssistantMessage
 				return response.content
 					.filter((b): b is { type: "text"; text: string } => b.type === "text")
 					.map(b => b.text)
@@ -365,14 +387,14 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			});
 		}
 
-		// Build system prompt with agent capabilities
+		// Build system prompt
 		const agentDesc = await describeAvailableAgents();
 		let systemPrompt = buildSwarmSystemPrompt(config, agentDesc);
 		if (args.dryRun) {
 			systemPrompt += "\n\n## DRY RUN MODE\nDo NOT call thread() or async_thread(). Instead, describe what threads you WOULD spawn (task, files, model). Call FINAL() with your execution plan.";
 		}
 
-		// Add episodic memory hints to system prompt
+		// Add episodic memory hints
 		if (episodicMemory && episodicMemory.size > 0) {
 			const hints = episodicMemory.getStrategyHints(args.query);
 			if (hints) {
@@ -380,7 +402,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			}
 		}
 
-		// Thread handler — wires Python thread() calls to ThreadManager
+		// Thread handler
 		const threadHandler = async (
 			task: string,
 			threadContext: string,
@@ -393,21 +415,24 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			let routeSlot = "";
 			let routeComplexity = "";
 
-			// Auto-routing: override agent/model if enabled and not explicitly specified
 			if (config.auto_model_selection && !agentBackend && !model) {
 				const route = await routeTask(task, config, episodicMemory);
 				resolvedAgent = route.agent;
 				resolvedModel = route.model;
 				routeSlot = route.slot;
 				routeComplexity = classifyTaskComplexity(task);
-				if (args.verbose) {
-					const memHints = episodicMemory?.getStrategyHints(task);
-					console.error(`  [router] ${route.reason} [slot: ${route.slot}]`);
-					if (memHints) console.error(`  [memory] ${memHints.split("\n")[1] || ""}`);
-				}
+				logRouter(`${route.reason} [slot: ${route.slot}]`);
 			}
 
 			const threadId = randomBytes(6).toString("hex");
+
+			// Update dashboard with task info
+			dashboard.update(threadId, "queued", undefined, {
+				task,
+				agent: resolvedAgent,
+				model: resolvedModel,
+			});
+
 			const result = await threadManager.spawnThread({
 				id: threadId,
 				task,
@@ -419,8 +444,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 				files,
 			});
 
-			// Record episode with slot/complexity metadata (supplements the
-			// generic recording in ThreadManager with routing-specific info)
+			// Record episode
 			if (episodicMemory && result.success && routeSlot) {
 				episodicMemory.record({
 					task,
@@ -433,7 +457,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 					estimatedCostUsd: result.estimatedCostUsd,
 					filesChanged: result.filesChanged,
 					summary: result.summary,
-				}).catch(() => {}); // Non-fatal
+				}).catch(() => {});
 			}
 
 			return {
@@ -444,11 +468,21 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			};
 		};
 
-		// Merge handler — wires Python merge_threads() to worktree merge
+		// Merge handler
 		const mergeHandler = async () => {
+			spinner.start("merging thread branches");
 			const threads = threadManager.getThreads();
 			const mergeOpts: MergeAllOptions = { continueOnConflict: true };
 			const results = await mergeAllThreads(args.dir, threads, mergeOpts);
+			spinner.stop();
+
+			const merged = results.filter(r => r.success).length;
+			const failed = results.filter(r => !r.success).length;
+			if (failed > 0) {
+				logWarn(`Merged ${merged} branches, ${failed} failed`);
+			} else if (merged > 0) {
+				logSuccess(`Merged ${merged} branches`);
+			}
 
 			const summary = results.map((r) =>
 				r.success
@@ -462,7 +496,10 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			};
 		};
 
+		// Run the orchestrator
+		spinner.start();
 		const startTime = Date.now();
+
 		const result = await runRlmLoop({
 			context,
 			query: args.query,
@@ -472,52 +509,48 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			systemPrompt,
 			threadHandler: args.dryRun ? undefined : threadHandler,
 			mergeHandler: args.dryRun ? undefined : mergeHandler,
-			onProgress: args.verbose
-				? (info) => {
-						const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-						console.error(
-							`[${elapsed}s] Iteration ${info.iteration}/${info.maxIterations} | ` +
-								`Sub-queries: ${info.subQueries} | Phase: ${info.phase}`,
-						);
-					}
-				: undefined,
+			onProgress: (info) => {
+				spinner.update(
+					`iteration ${info.iteration}/${info.maxIterations}` +
+					(info.subQueries > 0 ? ` · ${info.subQueries} queries` : ""),
+				);
+				logVerbose(
+					`Iteration ${info.iteration}/${info.maxIterations} | ` +
+					`Sub-queries: ${info.subQueries} | Phase: ${info.phase}`,
+				);
+			},
 		});
 
-		const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-		console.error("---");
-		console.error(
-			`Completed in ${elapsed}s | ${result.iterations} iterations | ${result.totalSubQueries} sub-queries | ${result.completed ? "success" : "incomplete"}`,
-		);
+		spinner.stop();
+		dashboard.clear();
 
-		const threads = threadManager.getThreads();
-		if (threads.length > 0) {
-			const completed = threads.filter(t => t.status === "completed").length;
-			const failed = threads.filter(t => t.status === "failed").length;
-			const cancelled = threads.filter(t => t.status === "cancelled").length;
-			const budget = threadManager.getBudgetState();
-			let threadSummary = `Threads: ${completed} completed, ${failed} failed`;
-			if (cancelled > 0) threadSummary += `, ${cancelled} cancelled`;
-			threadSummary += ` | Est. cost: $${budget.totalSpentUsd.toFixed(4)}`;
-			console.error(threadSummary);
+		const elapsed = (Date.now() - startTime) / 1000;
 
-			// Report cache stats if any cache activity occurred
-			const cacheStats = threadManager.getCacheStats();
-			if (cacheStats.hits > 0 || cacheStats.size > 0) {
-				console.error(
-					`Cache: ${cacheStats.hits} hits, ${cacheStats.misses} misses` +
-					` | Saved: ${(cacheStats.totalSavedMs / 1000).toFixed(1)}s, $${cacheStats.totalSavedUsd.toFixed(4)}`,
-				);
-			}
+		// Render summary
+		const summary: SessionSummary = {
+			elapsed,
+			iterations: result.iterations,
+			subQueries: result.totalSubQueries,
+			completed: result.completed,
+			answer: result.answer,
+			threads: threadManager.getThreads(),
+			budget: threadManager.getBudgetState(),
+			cacheStats: threadManager.getCacheStats(),
+			episodeCount: episodicMemory?.size,
+		};
 
-			// Report episodic memory stats
-			if (episodicMemory) {
-				console.error(`Memory: ${episodicMemory.size} episodes stored`);
-			}
+		renderSummary(summary);
+
+		// Output the answer
+		if (isJsonMode()) {
+			// Already output via renderSummary
+		} else {
+			process.stderr.write("\n");
+			logAnswer(result.answer);
 		}
-
-		console.error("---");
-		console.log(result.answer);
 	} finally {
+		spinner.stop();
+		dashboard.clear();
 		process.removeListener("SIGINT", abortAndExit);
 		process.removeListener("SIGTERM", abortAndExit);
 		repl.shutdown();

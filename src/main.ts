@@ -11,50 +11,80 @@
  *   swarm --dir ./project  → swarm mode (coding agent orchestration)
  */
 
-const HELP = `
-\x1b[36m╔══════════════════════════════════════════════════════════════╗
-║          swarm — Swarm-Native Coding Agent                 ║
-║     Open-source orchestrator for parallel coding agents     ║
-║              Built on RLM (arXiv:2512.24601)               ║
-╚══════════════════════════════════════════════════════════════╝\x1b[0m
+import {
+	bold, coral, cyan, dim, yellow, gray,
+	isTTY, symbols, termWidth,
+} from "./ui/theme.js";
 
-\x1b[1mSWARM MODE\x1b[0m (coding agent orchestration)
-  \x1b[33mswarm\x1b[0m --dir ./project "add error handling to all API routes"
-  \x1b[33mswarm\x1b[0m --dir ./project --orchestrator claude-sonnet-4-6 "task"
-  \x1b[33mswarm\x1b[0m --dir ./project --dry-run "plan refactor"
-  \x1b[33mswarm\x1b[0m --dir ./project --max-budget 5.00 "task"
+function buildHelp(): string {
+	const w = Math.min(termWidth(), 60);
+	const lines: string[] = [];
 
-\x1b[1mRLM MODE\x1b[0m (text processing, inherited from rlm-cli)
-  \x1b[33mswarm\x1b[0m                          Interactive terminal (default)
-  \x1b[33mswarm run\x1b[0m [options] "<query>"  Run a single query
-  \x1b[33mswarm viewer\x1b[0m                    Browse saved trajectory files
-  \x1b[33mswarm benchmark\x1b[0m <name> [--idx]  Run benchmark
+	if (isTTY) {
+		const title = " swarm ";
+		const sub = " cli ";
+		const padLen = w - title.length - sub.length - 4;
+		const l = symbols.horizontal.repeat(Math.floor(padLen / 2));
+		const r = symbols.horizontal.repeat(Math.ceil(padLen / 2));
+		lines.push("");
+		lines.push(`  ${cyan(`${symbols.topLeft}${l}`)}${bold(coral(title))}${dim(sub)}${cyan(`${r}${symbols.topRight}`)}`);
+		lines.push(`  ${cyan(symbols.vertLine)}${" ".repeat(w - 2)}${cyan(symbols.vertLine)}`);
+		lines.push(`  ${cyan(symbols.vertLine)}  ${dim("Open-source orchestrator for parallel coding agents")}${" ".repeat(Math.max(0, w - 55))}${cyan(symbols.vertLine)}`);
+		lines.push(`  ${cyan(symbols.vertLine)}  ${dim("Built on RLM (arXiv:2512.24601)")}${" ".repeat(Math.max(0, w - 36))}${cyan(symbols.vertLine)}`);
+		lines.push(`  ${cyan(symbols.vertLine)}${" ".repeat(w - 2)}${cyan(symbols.vertLine)}`);
+		lines.push(`  ${cyan(symbols.bottomLeft)}${cyan(symbols.horizontal.repeat(w - 2))}${cyan(symbols.bottomRight)}`);
+	} else {
+		lines.push("\nswarm — Open-source orchestrator for parallel coding agents");
+	}
 
-\x1b[1mSWARM OPTIONS\x1b[0m
-  --dir <path>           Target repository directory
-  --orchestrator <model> Model for the orchestrator LLM (default: RLM_MODEL)
-  --agent <backend>      Default agent backend (default: opencode)
-  --dry-run              Plan only, don't spawn threads
-  --max-budget <usd>     Maximum session budget in USD
-  --verbose              Show detailed progress
+	lines.push("");
+	lines.push(`  ${bold("SWARM MODE")} ${dim("(coding agent orchestration)")}`);
+	lines.push(`    ${yellow("swarm")} --dir ./project ${dim('"add error handling to all API routes"')}`);
+	lines.push(`    ${yellow("swarm")} --dir ./project --orchestrator claude-sonnet-4-6 ${dim('"task"')}`);
+	lines.push(`    ${yellow("swarm")} --dir ./project --dry-run ${dim('"plan refactor"')}`);
+	lines.push(`    ${yellow("swarm")} --dir ./project --max-budget 5.00 ${dim('"task"')}`);
 
-\x1b[1mRUN OPTIONS\x1b[0m
-  --model <id>     Override model (default: RLM_MODEL from .env)
-  --file <path>    Read context from a file
-  --url <url>      Fetch context from a URL
-  --stdin          Read context from stdin
+	lines.push("");
+	lines.push(`  ${bold("RLM MODE")} ${dim("(text processing, inherited from rlm-cli)")}`);
+	lines.push(`    ${yellow("swarm")}                          ${dim("Interactive terminal (default)")}`);
+	lines.push(`    ${yellow("swarm run")} [options] "<query>"  ${dim("Run a single query")}`);
+	lines.push(`    ${yellow("swarm viewer")}                    ${dim("Browse saved trajectory files")}`);
+	lines.push(`    ${yellow("swarm benchmark")} <name> [--idx]  ${dim("Run benchmark")}`);
 
-\x1b[1mCONFIGURATION\x1b[0m
-  .env file (pick one provider):
-    ANTHROPIC_API_KEY=sk-ant-...
-    OPENAI_API_KEY=sk-...
-    GEMINI_API_KEY=AIza...
+	lines.push("");
+	lines.push(`  ${bold("SWARM OPTIONS")}`);
+	lines.push(`    ${cyan("--dir")} <path>           Target repository directory`);
+	lines.push(`    ${cyan("--orchestrator")} <model> Model for the orchestrator LLM`);
+	lines.push(`    ${cyan("--agent")} <backend>      Default agent backend ${dim("(opencode)")}`);
+	lines.push(`    ${cyan("--dry-run")}              Plan only, don't spawn threads`);
+	lines.push(`    ${cyan("--max-budget")} <usd>     Maximum session budget in USD`);
+	lines.push(`    ${cyan("--verbose")}              Show detailed progress`);
+	lines.push(`    ${cyan("--quiet")} / ${cyan("-q")}           Suppress non-essential output`);
+	lines.push(`    ${cyan("--json")}                 Machine-readable JSON output`);
 
-  swarm_config.yaml:
-    max_threads: 5
-    default_agent: opencode
-    compression_strategy: structured
-`.trim();
+	lines.push("");
+	lines.push(`  ${bold("RUN OPTIONS")}`);
+	lines.push(`    ${cyan("--model")} <id>     Override model ${dim("(RLM_MODEL from .env)")}`);
+	lines.push(`    ${cyan("--file")} <path>    Read context from a file`);
+	lines.push(`    ${cyan("--url")} <url>      Fetch context from a URL`);
+	lines.push(`    ${cyan("--stdin")}          Read context from stdin`);
+
+	lines.push("");
+	lines.push(`  ${bold("CONFIGURATION")}`);
+	lines.push(`    ${dim(".env file (pick one provider):")}`);
+	lines.push(`      ANTHROPIC_API_KEY=sk-ant-...`);
+	lines.push(`      OPENAI_API_KEY=sk-...`);
+	lines.push(`      GEMINI_API_KEY=AIza...`);
+	lines.push("");
+	lines.push(`    ${dim("swarm_config.yaml:")}`);
+	lines.push(`      max_threads: 5`);
+	lines.push(`      default_agent: opencode`);
+	lines.push(`      compression_strategy: structured`);
+
+	return lines.join("\n");
+}
+
+const HELP = buildHelp();
 
 async function main() {
 	const args = process.argv.slice(2);
@@ -122,10 +152,10 @@ async function main() {
 					});
 				});
 			} else {
-				console.log(`\x1b[36m\x1b[1mswarm benchmark\x1b[0m — Run direct LLM vs RLM comparison\n`);
-				console.log(`\x1b[1mUSAGE\x1b[0m`);
-				console.log(`  \x1b[33mswarm benchmark oolong\x1b[0m    [--idx N]  Oolong Synth`);
-				console.log(`  \x1b[33mswarm benchmark longbench\x1b[0m [--idx N]  LongBench NarrativeQA\n`);
+				console.log(`${cyan(bold("swarm benchmark"))} ${dim("— Run direct LLM vs RLM comparison")}\n`);
+				console.log(bold("USAGE"));
+				console.log(`  ${yellow("swarm benchmark oolong")}    [--idx N]  Oolong Synth`);
+				console.log(`  ${yellow("swarm benchmark longbench")} [--idx N]  LongBench NarrativeQA\n`);
 			}
 			break;
 		}
