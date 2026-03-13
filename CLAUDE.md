@@ -22,18 +22,21 @@ npm run build
 
 - `src/main.ts` — CLI entry point, routes to swarm/run/interactive/viewer/benchmark
 - `src/swarm.ts` — Swarm mode: scans repo, sets up threads, runs RLM loop with orchestrator prompt
+- `src/interactive-swarm.ts` — Interactive REPL mode with session persistence and live thread monitoring
 - `src/core/rlm.ts` — Core RLM loop (Algorithm 1 from arXiv:2512.24601)
 - `src/core/repl.ts` — Python REPL bridge (line-delimited JSON over stdin/stdout)
 - `src/core/runtime.py` — Python runtime with thread(), async_thread(), merge_threads()
 - `src/agents/` — Agent backends (opencode, claude-code, codex, aider, direct-llm)
-- `src/routing/model-router.ts` — Auto model/agent selection based on task complexity + named slots + episodic memory
+- `src/routing/model-router.ts` — Auto model/agent selection based on task complexity + named slots + episodic memory + failure tracking (exponential decay)
 - `src/threads/manager.ts` — Thread lifecycle + concurrency + subthread caching + episode recording
 - `src/threads/cache.ts` — Subthread cache with optional disk persistence and TTL expiry
-- `src/memory/episodic.ts` — Episodic memory: persists successful strategies, trigram-based recall
+- `src/memory/episodic.ts` — Episodic memory: persists successful strategies, trigram-based recall, aggregate stats per agent
 - `src/worktree/` — Git worktree CRUD + merge
 - `src/compression/` — Result compression with episode quality filtering (success-only output)
 - `src/prompts/orchestrator.ts` — Swarm orchestrator system prompt with DAG composition examples
-- `src/viewer.ts` — Trajectory TUI viewer with swarm thread DAG visualization
+- `src/viewer.ts` — Trajectory TUI viewer with swarm thread DAG visualization, timing bars, cost breakdowns
+- `src/ui/` — CLI UI components (onboarding wizard, spinner, dashboard, session summary)
+- `action/` — GitHub Actions composite action (entrypoint, trigger parsing, security, PR creation)
 
 ## Key Design
 
@@ -67,3 +70,6 @@ JSON protocol between Python and TypeScript:
 - **Named model slots**: Tasks auto-classified into execution/search/reasoning/planning; each slot has preferred agents and optional model overrides
 - **Episodic memory**: Persists successful thread strategies to disk; trigram-based similarity recall informs agent/model selection in future sessions
 - **DAG composition**: Thread results compose via Python variable persistence (T1+T2 → T3); orchestrator prompt teaches multi-stage pipelines and failure re-routing
+- **Failure tracking**: FailureTracker class uses exponential-decay weighting to penalize recently-failed agent/model pairs in routing decisions
+- **Interactive mode**: Session-persistent REPL with /threads, /merge, /reject, /dag, /budget commands and SIGINT handling (single=cancel task, double=exit)
+- **GitHub Action**: Composite action triggered by `@swarm` in issue comments or workflow_dispatch. Security: author association check, fork PR rejection, $50 budget hard cap. Creates PRs and posts result comments.
