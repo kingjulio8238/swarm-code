@@ -43,6 +43,7 @@ export function buildHelp(): string {
 	lines.push(`    ${yellow("swarm")} --dir ./project --orchestrator claude-sonnet-4-6 ${dim('"task"')}`);
 	lines.push(`    ${yellow("swarm")} --dir ./project --dry-run ${dim('"plan refactor"')}`);
 	lines.push(`    ${yellow("swarm")} --dir ./project --max-budget 5.00 ${dim('"task"')}`);
+	lines.push(`    ${yellow("swarm")} --dir ./project              ${dim("Interactive REPL (no query)")}`);
 
 	lines.push("");
 	lines.push(`  ${bold("RLM MODE")} ${dim("(text processing, inherited from rlm-cli)")}`);
@@ -91,15 +92,47 @@ function getHelp(): string {
 	return _help;
 }
 
+/**
+ * Check if args contain positional (non-flag) arguments.
+ * Skips known flags that take a value argument.
+ */
+function hasPositionalArgs(args: string[]): boolean {
+	const flagsWithValue = new Set([
+		"--dir", "--orchestrator", "--agent", "--max-budget", "--model", "--file", "--url",
+	]);
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg.startsWith("--") || arg === "-q" || arg === "-h") {
+			// Skip flags with values
+			if (flagsWithValue.has(arg) && i + 1 < args.length) {
+				i++; // skip the value
+			}
+			continue;
+		}
+		// Found a positional argument
+		return true;
+	}
+	return false;
+}
+
 async function main() {
 	const args = process.argv.slice(2);
 
 	// Check if this is swarm mode (has --dir flag)
 	const dirIdx = args.indexOf("--dir");
 	if (dirIdx !== -1) {
-		// Swarm mode — dynamic import to avoid loading all swarm deps upfront
-		const { runSwarmMode } = await import("./swarm.js");
-		await runSwarmMode(args);
+		// Check if there's a query (positional args that aren't flags/flag-values)
+		const hasQuery = hasPositionalArgs(args);
+
+		if (hasQuery) {
+			// Single-shot swarm mode — dynamic import to avoid loading all swarm deps upfront
+			const { runSwarmMode } = await import("./swarm.js");
+			await runSwarmMode(args);
+		} else {
+			// Interactive swarm mode — no query provided, launch REPL
+			const { runInteractiveSwarm } = await import("./interactive-swarm.js");
+			await runInteractiveSwarm(args);
+		}
 		return;
 	}
 
@@ -193,8 +226,13 @@ async function main() {
 			if (command.startsWith("--")) {
 				// Flags without subcommand — check for --dir (swarm mode)
 				if (command === "--dir") {
-					const { runSwarmMode } = await import("./swarm.js");
-					await runSwarmMode(args);
+					if (hasPositionalArgs(args)) {
+						const { runSwarmMode } = await import("./swarm.js");
+						await runSwarmMode(args);
+					} else {
+						const { runInteractiveSwarm } = await import("./interactive-swarm.js");
+						await runInteractiveSwarm(args);
+					}
 				} else {
 					// Assume "run" mode, pass all args through
 					process.argv = [process.argv[0], process.argv[1], ...args];

@@ -58,6 +58,31 @@ export interface EpisodeRecall {
 	similarity: number;
 }
 
+/** Per-agent aggregate statistics derived from episodic memory. */
+export interface AgentAggregateStats {
+	/** Total number of successful episodes. */
+	totalEpisodes: number;
+	/** Average duration in ms. */
+	avgDurationMs: number;
+	/** Average cost in USD. */
+	avgCostUsd: number;
+	/** Success count per slot (execution/search/reasoning/planning). */
+	slotCounts: Map<string, number>;
+	/** File extensions this agent has successfully worked with. */
+	fileExtensions: Set<string>;
+}
+
+/** Aggregate stats across all agents. */
+export interface AggregateStats {
+	/** Per-agent statistics. */
+	perAgent: Map<string, AgentAggregateStats>;
+	/**
+	 * File extension → agent → success count.
+	 * Used by the router to boost agents that handle specific file types well.
+	 */
+	fileExtensions: Map<string, Map<string, number>>;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Stop words to filter from task keywords. */
@@ -288,6 +313,72 @@ export class EpisodicMemory {
 			model: bestPair.model,
 			confidence: Math.min(1, recalls[0].similarity),
 		};
+	}
+
+	/**
+	 * Get aggregate statistics across all episodes, grouped by agent.
+	 *
+	 * Returns per-agent success rates, average costs/durations, slot distributions,
+	 * and a file-extension-to-agent mapping. Used by the model router as a fallback
+	 * when no high-confidence episodic match exists.
+	 *
+	 * Returns null if no episodes are loaded (graceful degradation).
+	 */
+	getAggregateStats(): AggregateStats | null {
+		if (this.episodes.length === 0) return null;
+
+		const perAgent: Map<string, AgentAggregateStats> = new Map();
+		const fileExtensions: Map<string, Map<string, number>> = new Map();
+
+		for (const episode of this.episodes) {
+			if (!episode.success) continue;
+
+			// Initialize agent stats if needed
+			let stats = perAgent.get(episode.agent);
+			if (!stats) {
+				stats = {
+					totalEpisodes: 0,
+					avgDurationMs: 0,
+					avgCostUsd: 0,
+					slotCounts: new Map(),
+					fileExtensions: new Set(),
+				};
+				perAgent.set(episode.agent, stats);
+			}
+
+			// Running average: update incrementally
+			const n = stats.totalEpisodes;
+			stats.avgDurationMs = (stats.avgDurationMs * n + episode.durationMs) / (n + 1);
+			stats.avgCostUsd = (stats.avgCostUsd * n + episode.estimatedCostUsd) / (n + 1);
+			stats.totalEpisodes++;
+
+			// Slot counts
+			if (episode.slot) {
+				stats.slotCounts.set(
+					episode.slot,
+					(stats.slotCounts.get(episode.slot) || 0) + 1,
+				);
+			}
+
+			// Extract file extensions from changed files
+			for (const filePath of episode.filesChanged) {
+				const dotIdx = filePath.lastIndexOf(".");
+				if (dotIdx !== -1 && dotIdx < filePath.length - 1) {
+					const ext = filePath.slice(dotIdx).toLowerCase();
+					stats.fileExtensions.add(ext);
+
+					// Update global file extension → agent mapping
+					let agentMap = fileExtensions.get(ext);
+					if (!agentMap) {
+						agentMap = new Map();
+						fileExtensions.set(ext, agentMap);
+					}
+					agentMap.set(episode.agent, (agentMap.get(episode.agent) || 0) + 1);
+				}
+			}
+		}
+
+		return { perAgent, fileExtensions };
 	}
 
 	/** Get total episode count. */

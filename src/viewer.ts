@@ -281,7 +281,7 @@ async function pickFile(files: FileEntry[]): Promise<string> {
 
 // ── Rendering views ─────────────────────────────────────────────────────────
 
-type ViewMode = "overview" | "iteration" | "result" | "subqueries" | "subqueryDetail" | "llmInput" | "llmResponse" | "systemPrompt" | "swarm";
+type ViewMode = "overview" | "iteration" | "result" | "subqueries" | "subqueryDetail" | "llmInput" | "llmResponse" | "systemPrompt" | "swarm" | "swarmThreadDetail";
 
 interface ViewState {
 	mode: ViewMode;
@@ -289,6 +289,8 @@ interface ViewState {
 	subQueryIdx: number; // 0-based index into sub-queries for current iteration
 	scrollY: number;
 	traj: TrajectoryData;
+	swarmThreadIdx: number; // 0-based index into flat thread list for swarm view
+	showCostBreakdown: boolean; // toggle cost breakdown panel in swarm view
 }
 
 function buildIterLine(step: TrajectoryStep, isSelected: boolean): string {
@@ -780,92 +782,388 @@ function renderSystemPrompt(state: ViewState): void {
 	W(`${c.dim}q${c.reset} quit\n`);
 }
 
+// ── Swarm view helpers ──────────────────────────────────────────────────────
+
+/** Build a timing bar: filled blocks for elapsed portion, empty for remainder. */
+function timingBar(durationMs: number, maxDurationMs: number, barWidth: number): string {
+	if (maxDurationMs <= 0) return "░".repeat(barWidth);
+	const filled = Math.min(barWidth, Math.max(1, Math.round((durationMs / maxDurationMs) * barWidth)));
+	const empty = barWidth - filled;
+	return "█".repeat(filled) + "░".repeat(empty);
+}
+
+/** Get status color for a thread. */
+function statusColor(status: SwarmThreadEvent["status"]): string {
+	switch (status) {
+		case "completed": return c.green;
+		case "failed": return c.red;
+		case "cache_hit": return c.yellow;
+		case "cancelled": return c.gray;
+		default: return c.white;
+	}
+}
+
+/** Get status label for a thread. */
+function statusLabel(status: SwarmThreadEvent["status"]): string {
+	switch (status) {
+		case "cache_hit": return "CACHED";
+		default: return status.toUpperCase();
+	}
+}
+
+/** Get the flat ordered thread list (grouped by iteration). */
+function getFlatThreadList(swarm: SwarmTrajectoryData): SwarmThreadEvent[] {
+	const byIteration: Map<number, SwarmThreadEvent[]> = new Map();
+	for (const t of swarm.threads) {
+		const group = byIteration.get(t.iteration) || [];
+		group.push(t);
+		byIteration.set(t.iteration, group);
+	}
+	const iterations = [...byIteration.keys()].sort((a, b) => a - b);
+	const flat: SwarmThreadEvent[] = [];
+	for (const iter of iterations) {
+		flat.push(...byIteration.get(iter)!);
+	}
+	return flat;
+}
+
 // ── Swarm view ──────────────────────────────────────────────────────────────
 
 function renderSwarmView(state: ViewState): void {
 	const { traj } = state;
 	const swarm = traj.swarm;
+	const h = getHeight();
 
-	W(c.cursorHome, c.clearScreen, c.hideCursor);
+	const buf: string[] = [];
 
-	W(`\n${hline("━", c.cyan)}\n`);
-	W(`${centeredHeader(`${c.bold}${c.white}Swarm Thread DAG${c.reset}`, c.cyan)}\n`);
-	W(`${hline("━", c.cyan)}\n\n`);
+	// Header
+	buf.push(``);
+	buf.push(hline("━", c.cyan));
+	buf.push(centeredHeader(`${c.bold}${c.white}Swarm Thread DAG${c.reset}`, c.cyan));
+	buf.push(hline("━", c.cyan));
+	buf.push(``);
 
 	if (!swarm || swarm.threads.length === 0) {
-		W(`  ${c.dim}No swarm thread data in this trajectory.${c.reset}\n`);
-		W(`  ${c.dim}(Run in swarm mode to generate thread data)${c.reset}\n`);
-	} else {
-		// Summary stats
-		const completed = swarm.threads.filter(t => t.status === "completed").length;
-		const failed = swarm.threads.filter(t => t.status === "failed").length;
-		const cached = swarm.threads.filter(t => t.status === "cache_hit").length;
-		const totalDuration = swarm.threads.reduce((s, t) => s + t.durationMs, 0);
+		buf.push(`  ${c.dim}No swarm thread data in this trajectory.${c.reset}`);
+		buf.push(`  ${c.dim}(Run in swarm mode to generate thread data)${c.reset}`);
 
-		kvLine("Threads    ", `${swarm.threads.length} total (${completed} completed, ${failed} failed, ${cached} cached)`);
-		kvLine("Cost       ", `$${swarm.totalCostUsd.toFixed(4)}`);
-		kvLine("Duration   ", `${(totalDuration / 1000).toFixed(1)}s aggregate`);
-		if (swarm.cacheStats.hits > 0) {
-			kvLine("Cache      ", `${swarm.cacheStats.hits} hits, saved ${(swarm.cacheStats.savedMs / 1000).toFixed(1)}s / $${swarm.cacheStats.savedUsd.toFixed(4)}`);
-		}
-		if (swarm.episodeCount !== undefined) {
-			kvLine("Episodes   ", `${swarm.episodeCount} in memory`);
-		}
-		W(`\n`);
+		W(c.cursorHome, c.clearScreen, c.hideCursor);
+		for (const l of buf) W(l + "\n");
+		W(`\n${hline("─", c.gray)}\n`);
+		W(`  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`);
+		return;
+	}
 
-		// Thread DAG — group by iteration
-		const byIteration: Map<number, SwarmThreadEvent[]> = new Map();
-		for (const t of swarm.threads) {
-			const group = byIteration.get(t.iteration) || [];
-			group.push(t);
-			byIteration.set(t.iteration, group);
-		}
+	// Compute stats
+	const completed = swarm.threads.filter(t => t.status === "completed").length;
+	const failed = swarm.threads.filter(t => t.status === "failed").length;
+	const cached = swarm.threads.filter(t => t.status === "cache_hit").length;
+	const cancelled = swarm.threads.filter(t => t.status === "cancelled").length;
+	const aggregateDuration = swarm.threads.reduce((s, t) => s + t.durationMs, 0);
+	const maxDurationMs = Math.max(...swarm.threads.map(t => t.durationMs), 1);
 
-		const iterations = [...byIteration.keys()].sort((a, b) => a - b);
-		for (const iter of iterations) {
-			const threads = byIteration.get(iter)!;
-			W(`  ${c.cyan}${c.bold}Iteration ${iter}${c.reset}\n`);
+	// Estimate wall-clock time: sum of max-duration per iteration
+	const byIteration: Map<number, SwarmThreadEvent[]> = new Map();
+	for (const t of swarm.threads) {
+		const group = byIteration.get(t.iteration) || [];
+		group.push(t);
+		byIteration.set(t.iteration, group);
+	}
+	const iterations = [...byIteration.keys()].sort((a, b) => a - b);
+	let wallClockMs = 0;
+	for (const iter of iterations) {
+		const threads = byIteration.get(iter)!;
+		wallClockMs += Math.max(...threads.map(t => t.durationMs));
+	}
 
-			for (const t of threads) {
-				const tag = t.threadId.slice(0, 8);
-				const statusColor = t.status === "completed" ? c.green
-					: t.status === "cache_hit" ? c.yellow
-					: t.status === "failed" ? c.red
-					: c.gray;
-				const statusLabel = t.status === "cache_hit" ? "CACHED" : t.status.toUpperCase();
-				const cost = `$${t.estimatedCostUsd.toFixed(4)}`;
-				const duration = `${(t.durationMs / 1000).toFixed(1)}s`;
-				const slot = t.slot ? ` [${t.slot}]` : "";
-				const deps = t.dependsOn?.length
-					? ` ← ${t.dependsOn.map(d => d.slice(0, 8)).join(", ")}`
-					: "";
+	// Summary stats
+	buf.push(`  ${c.gray}Threads :${c.reset} ${swarm.threads.length} total  ${c.green}${completed} ok${c.reset}  ${failed > 0 ? `${c.red}${failed} fail${c.reset}  ` : ""}${cached > 0 ? `${c.yellow}${cached} cached${c.reset}  ` : ""}${cancelled > 0 ? `${c.gray}${cancelled} cancelled${c.reset}  ` : ""}`);
+	buf.push(`  ${c.gray}Cost    :${c.reset} $${swarm.totalCostUsd.toFixed(4)}`);
+	buf.push(`  ${c.gray}Time    :${c.reset} ${(wallClockMs / 1000).toFixed(1)}s wall / ${(aggregateDuration / 1000).toFixed(1)}s aggregate  ${c.dim}(${aggregateDuration > 0 ? (aggregateDuration / Math.max(wallClockMs, 1)).toFixed(1) : "1.0"}x parallelism)${c.reset}`);
+	if (swarm.cacheStats.hits > 0) {
+		buf.push(`  ${c.gray}Cache   :${c.reset} ${swarm.cacheStats.hits} hits, saved ${(swarm.cacheStats.savedMs / 1000).toFixed(1)}s / $${swarm.cacheStats.savedUsd.toFixed(4)}`);
+	}
+	if (swarm.episodeCount !== undefined) {
+		buf.push(`  ${c.gray}Episodes:${c.reset} ${swarm.episodeCount} in memory`);
+	}
+	buf.push(``);
 
-				W(`    ${c.dim}${tag}${c.reset} ${statusColor}${statusLabel}${c.reset}`);
-				W(` ${c.dim}${duration} ${cost}${c.reset}${slot}`);
-				W(` ${t.agent}/${c.bold}${t.model}${c.reset}${deps}\n`);
-				W(`    ${c.dim}  └─${c.reset} ${t.task.slice(0, 70)}${t.task.length > 70 ? "..." : ""}\n`);
+	// Build flat thread list for navigation
+	const flatThreads = getFlatThreadList(swarm);
 
-				if (t.filesChanged.length > 0) {
-					W(`    ${c.dim}     ${t.filesChanged.length} file${t.filesChanged.length !== 1 ? "s" : ""}: ${t.filesChanged.slice(0, 3).join(", ")}${t.filesChanged.length > 3 ? "..." : ""}${c.reset}\n`);
-				}
+	// Clamp swarmThreadIdx
+	if (state.swarmThreadIdx >= flatThreads.length) state.swarmThreadIdx = flatThreads.length - 1;
+	if (state.swarmThreadIdx < 0) state.swarmThreadIdx = 0;
+
+	// Determine timing bar width (fits within terminal minus prefix overhead)
+	const barWidth = 10;
+
+	// Build DAG lines — each thread produces 2-3 lines, iteration headers produce 1 line + connector
+	const dagLines: string[] = [];
+	const threadLineOffsets: number[] = []; // maps flat thread index -> dagLines offset
+	let flatIdx = 0;
+
+	for (let iterPos = 0; iterPos < iterations.length; iterPos++) {
+		const iter = iterations[iterPos];
+		const threads = byIteration.get(iter)!;
+
+		// Iteration header with dependency info
+		const allDeps = new Set<string>();
+		for (const t of threads) {
+			if (t.dependsOn) {
+				for (const d of t.dependsOn) allDeps.add(d);
 			}
+		}
+		// Filter deps to only those from prior iterations
+		const priorThreadIds = new Set<string>();
+		for (let pi = 0; pi < iterPos; pi++) {
+			const priorIter = iterations[pi];
+			for (const pt of byIteration.get(priorIter)!) {
+				priorThreadIds.add(pt.threadId);
+			}
+		}
+		const externalDeps = [...allDeps].filter(d => priorThreadIds.has(d));
+		const depSuffix = externalDeps.length > 0
+			? `  ${c.dim}(depends on: ${externalDeps.map(d => d.slice(0, 8)).join(", ")})${c.reset}`
+			: "";
 
-			W(`  ${c.dim}  |${c.reset}\n`);
+		dagLines.push(`  ${c.cyan}${c.bold}Iteration ${iter}${c.reset}${depSuffix}`);
+
+		for (let ti = 0; ti < threads.length; ti++) {
+			const t = threads[ti];
+			const isSelected = flatIdx === state.swarmThreadIdx;
+			const isLast = ti === threads.length - 1;
+			const connector = isLast ? "└─" : "├─";
+			const subConnector = isLast ? "   " : "│  ";
+
+			const tag = t.threadId.slice(0, 8);
+			const sColor = statusColor(t.status);
+			const sLabel = statusLabel(t.status).padEnd(9);
+			const bar = timingBar(t.durationMs, maxDurationMs, barWidth);
+			const duration = `${(t.durationMs / 1000).toFixed(1)}s`.padStart(6);
+			const cost = `$${t.estimatedCostUsd.toFixed(4)}`;
+
+			const highlight = isSelected ? `${c.inverse}` : "";
+			const highlightEnd = isSelected ? `${c.reset}` : "";
+
+			// Thread main line
+			threadLineOffsets.push(dagLines.length);
+			const mainLine = `    ${connector} ${highlight}${c.dim}${tag}${c.reset}${highlightEnd} ${sColor}${sLabel}${c.reset}  ${sColor}${bar}${c.reset}  ${c.dim}${duration}  ${cost}${c.reset}  ${t.agent}/${c.bold}${t.model}${c.reset}`;
+			dagLines.push(mainLine);
+
+			// Task description line
+			const taskPreview = t.task.length > 65 ? t.task.slice(0, 62) + "..." : t.task;
+			const fileCount = t.filesChanged.length;
+			const fileSuffix = fileCount > 0 ? ` ${c.dim}(${fileCount} file${fileCount !== 1 ? "s" : ""})${c.reset}` : "";
+			dagLines.push(`    ${subConnector} └─ ${taskPreview}${fileSuffix}`);
+
+			flatIdx++;
 		}
 
-		// Merge events
-		if (swarm.mergeEvents.length > 0) {
-			W(`  ${c.magenta}${c.bold}Merge Results${c.reset}\n`);
-			for (const m of swarm.mergeEvents) {
-				const icon = m.success ? `${c.green}✓${c.reset}` : `${c.red}✗${c.reset}`;
-				W(`    ${icon} ${m.branch}: ${m.message}\n`);
-			}
+		// Inter-iteration connector
+		if (iterPos < iterations.length - 1) {
+			dagLines.push(`  ${c.dim}│${c.reset}`);
 		}
 	}
 
-	W(`\n${hline("─", c.gray)}\n`);
-	W(`  ${c.dim}esc${c.reset} back  `);
-	W(`${c.dim}q${c.reset} quit\n`);
+	// Merge events
+	if (swarm.mergeEvents.length > 0) {
+		dagLines.push(``);
+		dagLines.push(`  ${c.magenta}${c.bold}Merge Results${c.reset}`);
+		for (const m of swarm.mergeEvents) {
+			const icon = m.success ? `${c.green}+${c.reset}` : `${c.red}x${c.reset}`;
+			dagLines.push(`    ${icon} ${m.branch}: ${m.message}`);
+		}
+	}
+
+	// Cost breakdown panel (toggled with 'c')
+	if (state.showCostBreakdown) {
+		dagLines.push(``);
+		dagLines.push(`  ${c.yellow}${c.bold}Cost Breakdown by Agent${c.reset}`);
+		dagLines.push(`  ${c.yellow}${"─".repeat(40)}${c.reset}`);
+		const costByAgent: Map<string, { cost: number; count: number; durationMs: number }> = new Map();
+		for (const t of swarm.threads) {
+			const key = `${t.agent}/${t.model}`;
+			const entry = costByAgent.get(key) || { cost: 0, count: 0, durationMs: 0 };
+			entry.cost += t.estimatedCostUsd;
+			entry.count++;
+			entry.durationMs += t.durationMs;
+			costByAgent.set(key, entry);
+		}
+		const sorted = [...costByAgent.entries()].sort((a, b) => b[1].cost - a[1].cost);
+		for (const [agent, stats] of sorted) {
+			const pct = swarm.totalCostUsd > 0 ? ((stats.cost / swarm.totalCostUsd) * 100).toFixed(0) : "0";
+			dagLines.push(`    ${c.bold}${agent}${c.reset}  ${c.dim}${stats.count} thread${stats.count !== 1 ? "s" : ""}${c.reset}  $${stats.cost.toFixed(4)}  ${c.dim}(${pct}%)${c.reset}  ${c.dim}${(stats.durationMs / 1000).toFixed(1)}s${c.reset}`);
+		}
+		dagLines.push(`  ${c.yellow}${"─".repeat(40)}${c.reset}`);
+		dagLines.push(`    ${c.bold}Total${c.reset}  ${swarm.threads.length} threads  $${swarm.totalCostUsd.toFixed(4)}`);
+	}
+
+	// Calculate scrolling for DAG content
+	const headerSize = buf.length;
+	const footerSize = 2;
+	const dagBudget = h - headerSize - footerSize;
+
+	// Scroll so selected thread is visible
+	const selLineOffset = threadLineOffsets[state.swarmThreadIdx] ?? 0;
+	let scrollY = Math.max(0, selLineOffset - Math.floor(dagBudget / 2));
+	if (dagLines.length <= dagBudget) scrollY = 0;
+
+	// Reserve lines for scroll indicators when needed
+	const hasScrollUp = scrollY > 0;
+	const hasScrollDown = (scrollY + dagBudget) < dagLines.length;
+	const contentBudget = dagBudget - (hasScrollUp ? 1 : 0) - (hasScrollDown ? 1 : 0);
+	const showFrom = scrollY;
+	const showTo = Math.min(dagLines.length, scrollY + contentBudget);
+
+	if (hasScrollUp) {
+		buf.push(`  ${c.dim}^ more above (${showFrom} lines)${c.reset}`);
+	}
+	for (let i = showFrom; i < showTo; i++) {
+		buf.push(dagLines[i]);
+	}
+	if (hasScrollDown) {
+		buf.push(`  ${c.dim}v more below (${dagLines.length - showTo} lines)${c.reset}`);
+	}
+
+	// Render
+	W(c.cursorHome, c.clearScreen, c.hideCursor);
+	for (const l of buf) W(l + "\n");
+
+	// Footer
+	W(hline("─", c.gray) + "\n");
+	W(`  ${c.dim}up/down${c.reset} select  ${c.dim}enter${c.reset} detail  ${c.dim}c${c.reset} cost  ${c.dim}m${c.reset} merges  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`);
+}
+
+// ── Swarm thread detail ─────────────────────────────────────────────────────
+
+function renderSwarmThreadDetail(state: ViewState): void {
+	const { traj } = state;
+	const swarm = traj.swarm;
+	if (!swarm || swarm.threads.length === 0) return;
+
+	const flatThreads = getFlatThreadList(swarm);
+	if (state.swarmThreadIdx >= flatThreads.length) state.swarmThreadIdx = flatThreads.length - 1;
+	if (state.swarmThreadIdx < 0) state.swarmThreadIdx = 0;
+
+	const t = flatThreads[state.swarmThreadIdx];
+	if (!t) return;
+
+	const w = getWidth() - 4;
+	const h = getHeight();
+	const maxDurationMs = Math.max(...swarm.threads.map(th => th.durationMs), 1);
+	const barWidth = 20;
+
+	// Build all content lines
+	const allLines: string[] = [];
+
+	allLines.push(``);
+	allLines.push(hline("━", c.cyan));
+	allLines.push(centeredHeader(
+		`${c.bold}${c.white}Thread ${t.threadId.slice(0, 8)}  —  ${statusLabel(t.status)}${c.reset}`,
+		c.cyan,
+	));
+	allLines.push(hline("━", c.cyan));
+	allLines.push(``);
+
+	// Status with color + timing bar
+	const sColor = statusColor(t.status);
+	const bar = timingBar(t.durationMs, maxDurationMs, barWidth);
+	allLines.push(`  ${c.gray}Status   :${c.reset} ${sColor}${c.bold}${statusLabel(t.status)}${c.reset}  ${sColor}${bar}${c.reset}`);
+	allLines.push(`  ${c.gray}Thread ID:${c.reset} ${t.threadId}`);
+	allLines.push(`  ${c.gray}Iteration:${c.reset} ${t.iteration}`);
+	allLines.push(`  ${c.gray}Agent    :${c.reset} ${t.agent}`);
+	allLines.push(`  ${c.gray}Model    :${c.reset} ${c.bold}${t.model}${c.reset}`);
+	if (t.slot) {
+		allLines.push(`  ${c.gray}Slot     :${c.reset} ${t.slot}`);
+	}
+	allLines.push(`  ${c.gray}Duration :${c.reset} ${(t.durationMs / 1000).toFixed(1)}s  ${c.dim}(${t.durationMs}ms)${c.reset}`);
+	allLines.push(`  ${c.gray}Cost     :${c.reset} $${t.estimatedCostUsd.toFixed(4)}`);
+	allLines.push(``);
+
+	// Full task description (boxed)
+	allLines.push(`  ${c.cyan}${c.bold}Task${c.reset}`);
+	allLines.push(`  ${c.cyan}┌${"─".repeat(w)}┐${c.reset}`);
+	for (const line of t.task.split("\n")) {
+		const stripped = line.replace(/\x1b\[[0-9;]*m/g, "");
+		const padding = Math.max(0, w - stripped.length - 1);
+		allLines.push(`  ${c.cyan}│${c.reset} ${line}${" ".repeat(padding)}${c.cyan}│${c.reset}`);
+	}
+	allLines.push(`  ${c.cyan}└${"─".repeat(w)}┘${c.reset}`);
+	allLines.push(``);
+
+	// Dependencies
+	if (t.dependsOn && t.dependsOn.length > 0) {
+		allLines.push(`  ${c.magenta}${c.bold}Dependencies${c.reset}  ${c.dim}(${t.dependsOn.length} thread${t.dependsOn.length !== 1 ? "s" : ""} provided context)${c.reset}`);
+		for (const depId of t.dependsOn) {
+			const depThread = swarm.threads.find(th => th.threadId === depId);
+			if (depThread) {
+				const depColor = statusColor(depThread.status);
+				const depTaskPreview = depThread.task.length > 50 ? depThread.task.slice(0, 47) + "..." : depThread.task;
+				allLines.push(`    ${depColor}${depId.slice(0, 8)}${c.reset}  ${depColor}${statusLabel(depThread.status)}${c.reset}  ${c.dim}${depTaskPreview}${c.reset}`);
+			} else {
+				allLines.push(`    ${c.dim}${depId.slice(0, 8)}  (not found in thread list)${c.reset}`);
+			}
+		}
+		allLines.push(``);
+	}
+
+	// Downstream (threads that depend on this one)
+	const downstream = swarm.threads.filter(th => th.dependsOn?.includes(t.threadId));
+	if (downstream.length > 0) {
+		allLines.push(`  ${c.blue}${c.bold}Downstream${c.reset}  ${c.dim}(${downstream.length} thread${downstream.length !== 1 ? "s" : ""} depend on this)${c.reset}`);
+		for (const ds of downstream) {
+			const dsColor = statusColor(ds.status);
+			const dsTaskPreview = ds.task.length > 50 ? ds.task.slice(0, 47) + "..." : ds.task;
+			allLines.push(`    ${dsColor}${ds.threadId.slice(0, 8)}${c.reset}  ${dsColor}${statusLabel(ds.status)}${c.reset}  ${c.dim}iter ${ds.iteration}${c.reset}  ${c.dim}${dsTaskPreview}${c.reset}`);
+		}
+		allLines.push(``);
+	}
+
+	// Files changed
+	if (t.filesChanged.length > 0) {
+		allLines.push(`  ${c.green}${c.bold}Files Changed${c.reset}  ${c.dim}(${t.filesChanged.length})${c.reset}`);
+		for (const f of t.filesChanged) {
+			allLines.push(`    ${c.green}+${c.reset} ${f}`);
+		}
+		allLines.push(``);
+	} else {
+		allLines.push(`  ${c.dim}No files changed.${c.reset}`);
+		allLines.push(``);
+	}
+
+	// Position info
+	const posInFlat = state.swarmThreadIdx + 1;
+	allLines.push(`  ${c.dim}Thread ${posInFlat} of ${flatThreads.length}${c.reset}`);
+
+	// Scrollable rendering
+	const footerSize = 2;
+	const viewable = h - footerSize;
+
+	const maxScroll = Math.max(0, allLines.length - viewable);
+	if (state.scrollY > maxScroll) state.scrollY = maxScroll;
+	if (state.scrollY < 0) state.scrollY = 0;
+
+	const from = state.scrollY;
+	const hasScrollUp = from > 0;
+	const hasScrollDown = (from + viewable) < allLines.length;
+	const contentLines = viewable - (hasScrollUp ? 1 : 0) - (hasScrollDown ? 1 : 0);
+	const to = Math.min(allLines.length, from + contentLines);
+
+	W(c.cursorHome, c.clearScreen, c.hideCursor);
+
+	if (hasScrollUp) {
+		W(`  ${c.dim}^ scroll up (${from} lines above)${c.reset}\n`);
+	}
+	for (let i = from; i < to; i++) W(allLines[i] + "\n");
+
+	if (hasScrollDown) {
+		W(`  ${c.dim}v scroll down (${allLines.length - to} lines below)${c.reset}\n`);
+	}
+
+	// Footer
+	W(hline("─", c.gray) + "\n");
+	W(`  ${c.dim}up/down${c.reset} scroll  ${c.dim}n/N${c.reset} next/prev  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`);
 }
 
 // ── Minimal syntax highlighting ─────────────────────────────────────────────
@@ -938,6 +1236,8 @@ async function main(): Promise<void> {
 		subQueryIdx: 0,
 		scrollY: 0,
 		traj,
+		swarmThreadIdx: 0,
+		showCostBreakdown: false,
 	};
 
 	function render(): void {
@@ -968,6 +1268,9 @@ async function main(): Promise<void> {
 				break;
 			case "swarm":
 				renderSwarmView(state);
+				break;
+			case "swarmThreadDetail":
+				renderSwarmThreadDetail(state);
 				break;
 		}
 	}
@@ -1101,14 +1404,56 @@ async function main(): Promise<void> {
 				}
 				break;
 
-			case "swarm":
-				if (key === "\x1b[D" || key === "\x1b" || key === "b") {
+			case "swarm": {
+				const swarmThreadCount = traj.swarm ? getFlatThreadList(traj.swarm).length : 0;
+				if (key === "\x1b[A") {
+					state.swarmThreadIdx = Math.max(0, state.swarmThreadIdx - 1);
+				} else if (key === "\x1b[B") {
+					state.swarmThreadIdx = Math.min(swarmThreadCount - 1, state.swarmThreadIdx + 1);
+				} else if (key === "\r" || key === "\n" || key === "\x1b[C") {
+					if (swarmThreadCount > 0) {
+						state.mode = "swarmThreadDetail";
+						state.scrollY = 0;
+					}
+				} else if (key === "c") {
+					state.showCostBreakdown = !state.showCostBreakdown;
+				} else if (key === "m") {
+					// Scroll to merge events section (jump selection to last thread)
+					state.swarmThreadIdx = Math.max(0, swarmThreadCount - 1);
+				} else if (key === "\x1b[D" || key === "\x1b" || key === "b") {
 					state.mode = "overview";
 				} else if (key === "q" || key === "\x03") {
 					W(c.showCursor, "\n");
 					process.exit(0);
 				}
 				break;
+			}
+
+			case "swarmThreadDetail": {
+				const stMax = traj.swarm ? getFlatThreadList(traj.swarm).length - 1 : 0;
+				if (key === "\x1b[A") {
+					state.scrollY = Math.max(0, state.scrollY - 3);
+				} else if (key === "\x1b[B") {
+					state.scrollY += 3;
+				} else if (key === "n" || key === "\x1b[C") {
+					if (state.swarmThreadIdx < stMax) {
+						state.swarmThreadIdx++;
+						state.scrollY = 0;
+					}
+				} else if (key === "N") {
+					if (state.swarmThreadIdx > 0) {
+						state.swarmThreadIdx--;
+						state.scrollY = 0;
+					}
+				} else if (key === "\x1b[D" || key === "\x1b" || key === "b") {
+					state.mode = "swarm";
+					state.scrollY = 0;
+				} else if (key === "q" || key === "\x03") {
+					W(c.showCursor, "\n");
+					process.exit(0);
+				}
+				break;
+			}
 		}
 
 		render();

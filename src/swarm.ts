@@ -32,7 +32,7 @@ import { randomBytes } from "node:crypto";
 import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
 import { mergeAllThreads, type MergeAllOptions } from "./worktree/merge.js";
 import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
-import { routeTask, classifyTaskSlot, classifyTaskComplexity, describeAvailableAgents } from "./routing/model-router.js";
+import { routeTask, classifyTaskSlot, classifyTaskComplexity, describeAvailableAgents, FailureTracker } from "./routing/model-router.js";
 import { EpisodicMemory } from "./memory/episodic.js";
 import type { ThreadProgressPhase } from "./core/types.js";
 import type { Api, Model } from "@mariozechner/pi-ai";
@@ -334,6 +334,9 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 		await episodicMemory.init();
 	}
 
+	// Initialize failure tracker for session-level agent failure tracking
+	const failureTracker = new FailureTracker();
+
 	// Render banner
 	renderBanner({
 		dir: args.dir,
@@ -444,7 +447,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			let routeComplexity = "";
 
 			if (config.auto_model_selection && !agentBackend && !model) {
-				const route = await routeTask(task, config, episodicMemory);
+				const route = await routeTask(task, config, episodicMemory, failureTracker);
 				resolvedAgent = route.agent;
 				resolvedModel = route.model;
 				routeSlot = route.slot;
@@ -471,6 +474,16 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 				},
 				files,
 			});
+
+			// Track failure in the failure tracker for routing adjustments
+			if (!result.success) {
+				failureTracker.recordFailure(
+					resolvedAgent,
+					resolvedModel,
+					task,
+					result.summary || "unknown error",
+				);
+			}
 
 			// Record episode
 			if (episodicMemory && result.success && routeSlot) {

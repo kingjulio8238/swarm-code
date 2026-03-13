@@ -15,6 +15,12 @@
  *      about agent strengths, and the LLM passes agent/model in thread() calls.
  *   2. Auto-routing (auto_model_selection=true): This router overrides the
  *      orchestrator's choice with a cost-optimal selection based on task analysis.
+ *
+ * Enhanced with:
+ *   - FailureTracker: session-level failure tracking with decay weighting
+ *   - Success rate weighting: penalizes agents with high failure rates
+ *   - File pattern matching: boosts agents that historically handle specific file types
+ *   - Aggregate episodic stats: fallback to best-performing agent per slot
  */
 
 import type { SwarmConfig } from "../core/types.js";
@@ -174,6 +180,137 @@ export function classifyTaskSlot(task: string): TaskSlot {
 	return "execution";
 }
 
+// ── Failure Tracker ────────────────────────────────────────────────────────
+
+/** Patterns that indicate transient errors (rate limits, timeouts, server errors). */
+const TRANSIENT_ERROR_PATTERNS = [
+	/timeout/i,
+	/timed?\s*out/i,
+	/rate limit/i,
+	/429/,
+	/503/,
+	/502/,
+	/500/,
+	/too many requests/i,
+	/temporarily unavailable/i,
+	/server error/i,
+	/overloaded/i,
+	/capacity/i,
+	/ECONNRESET/i,
+	/ECONNREFUSED/i,
+	/EPIPE/i,
+];
+
+export interface FailureRecord {
+	agent: string;
+	model: string;
+	task: string;
+	error: string;
+	timestamp: number;
+	/** Transient errors (rate limit, timeout) decay faster than permanent ones. */
+	isTransient: boolean;
+}
+
+/**
+ * Tracks agent/model failures within a session to inform routing decisions.
+ *
+ * Failure records decay over time — recent failures weigh more heavily.
+ * Transient errors (rate limits, timeouts) decay faster than permanent ones.
+ */
+export class FailureTracker {
+	private failures: FailureRecord[] = [];
+	/** Half-life for permanent failure decay (ms). Failures lose half their weight after this. */
+	private readonly permanentHalfLifeMs: number;
+	/** Half-life for transient failure decay (ms). Shorter — transient issues resolve quickly. */
+	private readonly transientHalfLifeMs: number;
+
+	constructor(permanentHalfLifeMs: number = 10 * 60 * 1000, transientHalfLifeMs: number = 3 * 60 * 1000) {
+		this.permanentHalfLifeMs = permanentHalfLifeMs;
+		this.transientHalfLifeMs = transientHalfLifeMs;
+	}
+
+	/**
+	 * Record a failure for an agent+model pair.
+	 * Classifies the error as transient or permanent based on pattern matching.
+	 */
+	recordFailure(agent: string, model: string, task: string, error: string): void {
+		const isTransient = TRANSIENT_ERROR_PATTERNS.some(p => p.test(error));
+		this.failures.push({
+			agent,
+			model,
+			task,
+			error,
+			timestamp: Date.now(),
+			isTransient,
+		});
+	}
+
+	/**
+	 * Get the weighted failure rate for an agent+model pair (0-1).
+	 *
+	 * Uses exponential decay so recent failures count more than old ones.
+	 * The rate is capped at 1.0 (effectively: agent is completely unreliable).
+	 */
+	getFailureRate(agent: string, model?: string): number {
+		const now = Date.now();
+		let weightedFailures = 0;
+
+		for (const f of this.failures) {
+			if (f.agent !== agent) continue;
+			if (model && f.model !== model) continue;
+
+			const age = now - f.timestamp;
+			const halfLife = f.isTransient ? this.transientHalfLifeMs : this.permanentHalfLifeMs;
+			// Exponential decay: weight = 2^(-age/halfLife)
+			const weight = Math.pow(2, -age / halfLife);
+			weightedFailures += weight;
+		}
+
+		// Normalize: 3 weighted failures = rate of 1.0
+		// This means a single recent failure gives ~0.33, two give ~0.67, three+ saturate at 1.0
+		return Math.min(1, weightedFailures / 3);
+	}
+
+	/**
+	 * Check if an agent has a 100% failure rate (all recent attempts failed,
+	 * with no significant decay). Used to skip completely broken agents.
+	 */
+	isFullyFailed(agent: string): boolean {
+		return this.getFailureRate(agent) >= 0.99;
+	}
+
+	/** Get all failure records (for debugging/inspection). */
+	getFailures(): FailureRecord[] {
+		return [...this.failures];
+	}
+
+	/** Get the number of raw (undecayed) failures for an agent. */
+	getFailureCount(agent: string): number {
+		return this.failures.filter(f => f.agent === agent).length;
+	}
+
+	/** Clear all failure records. */
+	clear(): void {
+		this.failures = [];
+	}
+}
+
+// ── File pattern extraction ────────────────────────────────────────────────
+
+/** Common file extensions to look for in task descriptions. */
+const FILE_EXTENSION_PATTERN = /\.(ts|tsx|js|jsx|py|rs|go|java|rb|cpp|c|h|css|scss|html|json|yaml|yml|toml|md|sql|sh|bash|zsh|vue|svelte|swift|kt|cs|php)\b/gi;
+
+/**
+ * Extract file extensions mentioned in a task description.
+ * Returns unique lowercase extensions (e.g., [".ts", ".py"]).
+ */
+export function extractFileExtensions(task: string): string[] {
+	const matches = task.match(FILE_EXTENSION_PATTERN);
+	if (!matches) return [];
+	const unique = new Set(matches.map(m => m.toLowerCase()));
+	return [...unique];
+}
+
 // ── Router ─────────────────────────────────────────────────────────────────
 
 export interface RouteResult {
@@ -191,12 +328,16 @@ export interface RouteResult {
  *   2. Classify task slot (execution/search/reasoning/planning)
  *   3. Check for slot-specific model overrides in config
  *   4. Score agents with slot preference bonus
- *   5. Pick the cheapest capable option
+ *   5. Apply failure rate penalty (skip fully-failed agents)
+ *   6. Apply file pattern matching bonus from episodic memory
+ *   7. Fallback to aggregate episodic stats when no high-confidence match
+ *   8. Pick the highest-scoring capable option
  */
 export async function routeTask(
 	task: string,
 	config: SwarmConfig,
 	memory?: EpisodicMemory,
+	failureTracker?: FailureTracker,
 ): Promise<RouteResult> {
 	const complexity = classifyTaskComplexity(task);
 	const slot = classifyTaskSlot(task);
@@ -210,6 +351,12 @@ export async function routeTask(
 	// Check episodic memory for past successful strategies
 	const memoryRecommendation = memory?.recommendStrategy(task);
 
+	// Extract file extensions for file-pattern matching
+	const taskExtensions = extractFileExtensions(task);
+
+	// Get aggregate stats from episodic memory (if available)
+	const aggregateStats = memory?.getAggregateStats?.();
+
 	// If no agents available, fall back to direct-llm
 	if (available.length === 0) {
 		return {
@@ -220,15 +367,40 @@ export async function routeTask(
 		};
 	}
 
-	// If episodic memory has a high-confidence recommendation, prefer it
-	if (memoryRecommendation && memoryRecommendation.confidence >= 0.5 &&
+	// If episodic memory has a recommendation at confidence >= 0.3, consider it —
+	// but weight by (1 - failureRate) of the recommended agent
+	if (memoryRecommendation && memoryRecommendation.confidence >= 0.3 &&
 		available.includes(memoryRecommendation.agent)) {
-		return {
-			agent: memoryRecommendation.agent,
-			model: slotModel || memoryRecommendation.model,
-			slot,
-			reason: `${slot}/${complexity} → ${memoryRecommendation.agent} (episodic memory, ${(memoryRecommendation.confidence * 100).toFixed(0)}% confidence)`,
-		};
+		const failureRate = failureTracker?.getFailureRate(memoryRecommendation.agent) ?? 0;
+		const adjustedConfidence = memoryRecommendation.confidence * (1 - failureRate);
+
+		// Only take the fast path if adjusted confidence is still strong (>= 0.5)
+		if (adjustedConfidence >= 0.5 && !failureTracker?.isFullyFailed(memoryRecommendation.agent)) {
+			return {
+				agent: memoryRecommendation.agent,
+				model: slotModel || memoryRecommendation.model,
+				slot,
+				reason: `${slot}/${complexity} → ${memoryRecommendation.agent} (episodic memory, ` +
+					`${(memoryRecommendation.confidence * 100).toFixed(0)}% confidence` +
+					`${failureRate > 0 ? `, adjusted: ${(adjustedConfidence * 100).toFixed(0)}%` : ""})`,
+			};
+		}
+	}
+
+	// Build file-extension success map from episodic memory
+	const fileExtensionBonus: Map<string, number> = new Map();
+	if (taskExtensions.length > 0 && aggregateStats?.fileExtensions) {
+		for (const ext of taskExtensions) {
+			const agentsForExt = aggregateStats.fileExtensions.get(ext);
+			if (agentsForExt) {
+				for (const [agent, count] of agentsForExt) {
+					const current = fileExtensionBonus.get(agent) || 0;
+					// Bonus scales with number of successful episodes for this extension,
+					// capped at 2 points per extension
+					fileExtensionBonus.set(agent, current + Math.min(2, count * 0.5));
+				}
+			}
+		}
 	}
 
 	// Get preferred agents for this slot
@@ -236,6 +408,11 @@ export async function routeTask(
 
 	// Score each available agent for this task
 	const scored = available
+		.filter(name => {
+			// Skip agents that are fully failed (100% failure rate)
+			if (failureTracker?.isFullyFailed(name)) return false;
+			return true;
+		})
 		.map(name => {
 			const cap = AGENT_CAPABILITIES[name];
 			if (!cap) return { name, score: 0, model: config.default_model };
@@ -258,7 +435,32 @@ export async function routeTask(
 
 			// Episodic memory boost — agents that worked well for similar tasks
 			if (memoryRecommendation && memoryRecommendation.agent === name) {
-				score += memoryRecommendation.confidence * 5;
+				const failureRate = failureTracker?.getFailureRate(name) ?? 0;
+				// Weight the memory recommendation by (1 - failureRate)
+				score += memoryRecommendation.confidence * 5 * (1 - failureRate);
+			}
+
+			// Aggregate stats boost — if no strong episodic match, use historical performance
+			if (aggregateStats && (!memoryRecommendation || memoryRecommendation.confidence < 0.3)) {
+				const agentStats = aggregateStats.perAgent.get(name);
+				if (agentStats) {
+					// Boost agents that historically perform well for this slot
+					if (agentStats.slotCounts.get(slot)) {
+						const slotSuccesses = agentStats.slotCounts.get(slot)!;
+						// Small boost proportional to past successes in this slot (capped at 3)
+						score += Math.min(3, slotSuccesses * 0.5);
+					}
+					// Slight efficiency bonus for agents with low average cost
+					if (agentStats.avgCostUsd < 0.05) {
+						score += 1;
+					}
+				}
+			}
+
+			// File pattern matching bonus — agents that succeeded with these file types
+			const extBonus = fileExtensionBonus.get(name) || 0;
+			if (extBonus > 0) {
+				score += extBonus;
 			}
 
 			// Complexity-cost alignment
@@ -271,6 +473,12 @@ export async function routeTask(
 			} else if (complexity === "complex") {
 				// Prefer capable agents, cost is less important
 				score += cap.costTier; // Higher cost often = more capable
+			}
+
+			// Failure rate penalty — penalize agents that have been failing recently
+			if (failureTracker) {
+				const failureRate = failureTracker.getFailureRate(name);
+				score -= failureRate * 10;
 			}
 
 			// Select model: slot override > memory suggestion > complexity-based default
@@ -291,14 +499,28 @@ export async function routeTask(
 		})
 		.sort((a, b) => b.score - a.score);
 
+	// If all agents were filtered out (all fully failed), fall back to direct-llm
+	if (scored.length === 0) {
+		return {
+			agent: "direct-llm",
+			model: slotModel || config.default_model,
+			slot,
+			reason: `${slot}/${complexity} → direct-llm (all agents have 100% failure rate, fallback)`,
+		};
+	}
+
 	const best = scored[0];
 	const memNote = memoryRecommendation ? `, memory: ${memoryRecommendation.agent}` : "";
+	const bestFailRate = failureTracker?.getFailureRate(best.name) ?? 0;
+	const failNote = bestFailRate > 0
+		? `, failures: ${(bestFailRate * 100).toFixed(0)}%`
+		: "";
 
 	return {
 		agent: best.name,
 		model: best.model,
 		slot,
-		reason: `${slot}/${complexity} → ${best.name} (score: ${best.score}${memNote})`,
+		reason: `${slot}/${complexity} → ${best.name} (score: ${best.score.toFixed(1)}${memNote}${failNote})`,
 	};
 }
 
