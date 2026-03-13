@@ -1,5 +1,5 @@
 /**
- * MCP tool definitions and handlers for swarm-cli.
+ * MCP tool definitions and handlers for swarm-code.
  *
  * Tools:
  *   - swarm_run:     Full orchestrated swarm execution (subprocess)
@@ -403,7 +403,7 @@ function findSwarmEntrypoint(): { bin: string; binArgs: string[] } {
 		return { bin: "npx", binArgs: ["tsx", srcEntry] };
 	}
 
-	throw new Error("swarm-cli entrypoint not found. Run 'npm run build' or install swarm-cli globally.");
+	throw new Error("swarm-code entrypoint not found. Run 'npm run build' or install swarm-code globally.");
 }
 
 function tryParseSwarmJson(stdout: string): Record<string, unknown> | null {

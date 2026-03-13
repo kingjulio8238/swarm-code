@@ -1,5 +1,5 @@
 /**
- * Persistent Python REPL manager for swarm-cli.
+ * Persistent Python REPL manager for swarm-code.
  *
  * Spawns a single Python subprocess running `runtime.py` and keeps it alive
  * across multiple RLM iterations. Communication uses line-delimited JSON

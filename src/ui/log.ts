@@ -1,7 +1,7 @@
 /**
  * Structured logging — consistent formatting for all terminal output.
  *
- * All swarm-cli output flows through these functions to ensure consistent
+ * All swarm-code output flows through these functions to ensure consistent
  * formatting, TTY-awareness, and proper stdout/stderr separation.
  *
  * Convention: progress/status → stderr, final answer → stdout.

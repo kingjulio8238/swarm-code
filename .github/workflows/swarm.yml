@@ -1,4 +1,4 @@
-# Template workflow for swarm-cli GitHub Action
+# Template workflow for swarm-code GitHub Action
 #
 # Copy this file to your repo's .github/workflows/ directory.
 #
@@ -65,7 +65,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run swarm-cli
+      - name: Run swarm-code
         uses: kingjulio8238/swarm-code@main
         with:
           task: ${{ github.event.inputs.task || '' }}

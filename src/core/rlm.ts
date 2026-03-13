@@ -1,6 +1,6 @@
 /**
  * RLM Loop — implements Algorithm 1 from "Recursive Language Models" (arXiv:2512.24601).
- * Extended for swarm-cli with thread handler wiring.
+ * Extended for swarm-code with thread handler wiring.
  *
  * The loop works as follows:
  *   1. Inject the full context into a persistent Python REPL as a variable.

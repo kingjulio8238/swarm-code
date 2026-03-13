@@ -1,5 +1,5 @@
 /**
- * GitHub Action entrypoint for swarm-cli.
+ * GitHub Action entrypoint for swarm-code.
  *
  * Orchestrates the full flow:
  *   1. Read inputs (task, API keys, config)
@@ -84,7 +84,7 @@ function loadEventPayload(): Record<string, unknown> {
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-	info("swarm-cli GitHub Action starting...");
+	info("swarm-code GitHub Action starting...");
 
 	// 1. Load event and parse trigger
 	const eventPayload = loadEventPayload();
@@ -138,7 +138,7 @@ async function main(): Promise<void> {
 
 	info(`Agent: ${agent}, Budget: $${maxBudget.toFixed(2)}`);
 
-	// 4. Install swarm-cli if not already available
+	// 4. Install swarm-code if not already available
 	ensureSwarmInstalled();
 
 	// 5. Run swarm
@@ -192,26 +192,26 @@ async function main(): Promise<void> {
 	setOutput("elapsed_s", output.elapsed_s.toFixed(1));
 	setOutput("answer", output.answer.slice(0, 1000)); // Cap output length
 
-	info("swarm-cli GitHub Action complete.");
+	info("swarm-code GitHub Action complete.");
 }
 
 // ── Swarm execution ────────────────────────────────────────────────────────
 
 function ensureSwarmInstalled(): void {
 	try {
-		execFileSync("npx", ["swarm-cli", "--version"], {
+		execFileSync("npx", ["swarm-code", "--version"], {
 			encoding: "utf-8",
 			stdio: "pipe",
 		});
-		info("swarm-cli is available via npx.");
+		info("swarm-code is available via npx.");
 	} catch {
-		info("Installing swarm-cli...");
+		info("Installing swarm-code...");
 		try {
-			execSync("npm install -g swarm-cli", { stdio: "pipe" });
-			info("swarm-cli installed globally.");
+			execSync("npm install -g swarm-code", { stdio: "pipe" });
+			info("swarm-code installed globally.");
 		} catch (err) {
 			// Fall back to npx (it will download on first use)
-			info("Will use npx to run swarm-cli.");
+			info("Will use npx to run swarm-code.");
 		}
 	}
 }
@@ -223,7 +223,7 @@ function runSwarm(
 	maxBudget: number,
 ): SwarmJsonOutput {
 	const args = [
-		"swarm-cli",
+		"swarm-code",
 		"--dir", ".",
 		"--json",
 		"--quiet",

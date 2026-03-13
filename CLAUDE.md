@@ -1,4 +1,4 @@
-# swarm-cli
+# swarm-code
 
 Open-source swarm-native coding agent orchestrator. Fork of rlm-cli extended with parallel coding agent threads in isolated git worktrees.
 
@@ -80,4 +80,4 @@ JSON protocol between Python and TypeScript:
 - **Failure tracking**: FailureTracker class uses exponential-decay weighting to penalize recently-failed agent/model pairs in routing decisions
 - **Interactive mode**: Session-persistent REPL with /threads, /merge, /reject, /dag, /budget commands and SIGINT handling (single=cancel task, double=exit)
 - **GitHub Action**: Composite action triggered by `@swarm` in issue comments or workflow_dispatch. Security: author association check, fork PR rejection, $50 budget hard cap. Creates PRs and posts result comments.
-- **MCP server**: Exposes 6 tools (swarm_run, swarm_thread, swarm_status, swarm_merge, swarm_cancel, swarm_cleanup) over stdio transport. Per-directory sessions with lazy-init ThreadManager/WorktreeManager. Claude Code: `claude mcp add swarm-cli -- npx swarm-cli mcp`
+- **MCP server**: Exposes 6 tools (swarm_run, swarm_thread, swarm_status, swarm_merge, swarm_cancel, swarm_cleanup) over stdio transport. Per-directory sessions with lazy-init ThreadManager/WorktreeManager. Claude Code: `claude mcp add swarm-code -- npx swarm-code mcp`

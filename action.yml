@@ -1,6 +1,6 @@
-name: 'swarm-cli'
-description: 'Run swarm-cli coding agent orchestrator on your repo. Trigger from issue comments or workflow dispatch.'
-author: 'swarm-cli'
+name: 'swarm-code'
+description: 'Run swarm-code coding agent orchestrator on your repo. Trigger from issue comments or workflow dispatch.'
+author: 'swarm-code'
 
 branding:
   icon: 'git-branch'
@@ -64,15 +64,15 @@ runs:
       with:
         node-version: '20'
 
-    - name: Install swarm-cli
+    - name: Install swarm-code
       shell: bash
-      run: npm install -g swarm-cli
+      run: npm install -g swarm-code
 
     - name: Configure git
       shell: bash
       run: |
-        git config user.name "swarm-cli[bot]"
-        git config user.email "swarm-cli[bot]@users.noreply.github.com"
+        git config user.name "swarm-code[bot]"
+        git config user.email "swarm-code[bot]@users.noreply.github.com"
 
     - name: Run swarm action
       shell: bash

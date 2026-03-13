@@ -1,5 +1,5 @@
 /**
- * MCP server for swarm-cli.
+ * MCP server for swarm-code.
  *
  * Exposes swarm capabilities as MCP tools that can be called by
  * Claude Code, Cursor, or any MCP-compatible client.
@@ -40,7 +40,7 @@ export async function startMcpServer(args: string[]): Promise<void> {
 	// Create MCP server
 	const server = new McpServer(
 		{
-			name: "swarm-cli",
+			name: "swarm-code",
 			version: getVersion(),
 		},
 		{

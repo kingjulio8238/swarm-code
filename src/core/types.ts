@@ -1,5 +1,5 @@
 /**
- * Shared type definitions for swarm-cli.
+ * Shared type definitions for swarm-code.
  */
 
 // ── Agent types ─────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 /**
- * Configuration loader for swarm-cli.
+ * Configuration loader for swarm-code.
  *
  * Reads swarm_config.yaml (or rlm_config.yaml fallback) from project root or cwd.
  * Extends RLM config with swarm-specific fields.

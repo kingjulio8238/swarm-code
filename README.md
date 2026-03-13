@@ -1,11 +1,11 @@
-# swarm-cli
+# swarm-code
 
 Open-source swarm-native coding agent orchestrator. Spawns parallel coding agents in isolated git worktrees, orchestrated by a Recursive Language Model (based on [arXiv:2512.24601](https://arxiv.org/abs/2512.24601)).
 
 ## Install
 
 ```bash
-npm install -g swarm-cli
+npm install -g swarm-code
 ```
 
 Requires **Node.js >= 20** and **Python 3**.
@@ -179,7 +179,7 @@ swarm mcp --dir ./my-project    # Start with default directory
 **Claude Code setup:**
 
 ```bash
-claude mcp add swarm-cli -- npx swarm-cli mcp
+claude mcp add swarm-code -- npx swarm-code mcp
 ```
 
 Or add to your project's `.mcp.json`:
@@ -187,9 +187,9 @@ Or add to your project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "swarm-cli": {
+    "swarm-code": {
       "command": "npx",
-      "args": ["swarm-cli", "mcp", "--dir", "."],
+      "args": ["swarm-code", "mcp", "--dir", "."],
       "env": {
         "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
       }

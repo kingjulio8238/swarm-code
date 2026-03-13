@@ -1,5 +1,5 @@
 /**
- * Shared test utilities for swarm-cli tests.
+ * Shared test utilities for swarm-code tests.
  */
 
 import { execFileSync } from "node:child_process";
