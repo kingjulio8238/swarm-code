@@ -1415,51 +1415,109 @@ async function interactive(): Promise<void> {
 		printBanner();
 		console.log(`  ${c.bold}Welcome! Let's get you set up.${c.reset}\n`);
 
+		// Agent definitions — each lists which API keys it needs (if any)
+		const AGENT_CHOICES = [
+			{
+				name: "OpenCode",
+				id: "opencode",
+				desc: "Multi-provider + open-source models (Ollama, DeepSeek, Kimi, GLM, ...)",
+				keys: SETUP_PROVIDERS, // accepts any provider
+				needsAnyKey: true,
+			},
+			{
+				name: "Claude Code",
+				id: "claude-code",
+				desc: "Anthropic",
+				keys: SETUP_PROVIDERS.filter((p) => p.piProvider === "anthropic"),
+				needsAnyKey: false,
+			},
+			{
+				name: "Codex",
+				id: "codex",
+				desc: "OpenAI",
+				keys: SETUP_PROVIDERS.filter((p) => p.piProvider === "openai"),
+				needsAnyKey: false,
+			},
+			{
+				name: "Aider",
+				id: "aider",
+				desc: "Git-aware AI pair programmer (Anthropic, OpenAI)",
+				keys: SETUP_PROVIDERS.filter((p) => p.piProvider === "anthropic" || p.piProvider === "openai"),
+				needsAnyKey: true,
+			},
+			{
+				name: "Direct LLM",
+				id: "direct-llm",
+				desc: "Bare API calls, no coding agent",
+				keys: SETUP_PROVIDERS,
+				needsAnyKey: true,
+			},
+		];
+
 		const setupRl = readline.createInterface({ input: stdin, output: stdout, terminal: true });
 		let setupDone = false;
 
 		while (!setupDone) {
-			console.log(`  ${c.bold}Select your provider:${c.reset}\n`);
-			for (let i = 0; i < SETUP_PROVIDERS.length; i++) {
-				console.log(
-					`  ${c.dim}${i + 1}${c.reset}  ${SETUP_PROVIDERS[i].name} ${c.dim}(${SETUP_PROVIDERS[i].label})${c.reset}`,
-				);
+			console.log(`  ${c.bold}Select your coding agent:${c.reset}\n`);
+			for (let i = 0; i < AGENT_CHOICES.length; i++) {
+				const a = AGENT_CHOICES[i];
+				console.log(`  ${c.dim}${i + 1}${c.reset}  ${a.name}  ${c.dim}${a.desc}${c.reset}`);
 			}
 			console.log();
 
-			const choice = await questionWithEsc(setupRl, `  ${c.cyan}Provider [1-${SETUP_PROVIDERS.length}]:${c.reset} `);
+			const choice = await questionWithEsc(setupRl, `  ${c.cyan}Agent [1-${AGENT_CHOICES.length}]:${c.reset} `);
 			if (choice === null) {
-				// ESC at provider selection → exit
 				console.log(`\n  ${c.dim}Exiting.${c.reset}\n`);
 				setupRl.close();
 				process.exit(0);
 			}
 			const idx = parseInt(choice, 10) - 1;
-			if (Number.isNaN(idx) || idx < 0 || idx >= SETUP_PROVIDERS.length) {
+			if (Number.isNaN(idx) || idx < 0 || idx >= AGENT_CHOICES.length) {
 				console.log(`\n  ${c.dim}Invalid choice.${c.reset}\n`);
 				continue;
 			}
 
-			const provider = SETUP_PROVIDERS[idx];
-			const gotKey = await promptForProviderKey(setupRl, provider);
-			if (gotKey === null) {
-				// ESC at key entry → back to provider selection
-				console.log();
-				continue;
-			}
-			if (!gotKey) {
-				console.log(`\n  ${c.dim}No key provided. Exiting.${c.reset}\n`);
-				setupRl.close();
-				process.exit(0);
+			const agent = AGENT_CHOICES[idx];
+			console.log(`\n  ${c.green}✓${c.reset} Agent: ${c.bold}${agent.name}${c.reset}\n`);
+
+			// Prompt for API key(s) based on the selected agent
+			if (agent.keys.length > 0) {
+				if (agent.needsAnyKey) {
+					console.log(`  ${c.dim}Configure at least one provider (ESC to skip):${c.reset}\n`);
+				} else {
+					console.log(`  ${c.dim}Configure API key:${c.reset}\n`);
+				}
+
+				let gotAnyKey = false;
+				for (const provider of agent.keys) {
+					const gotKey = await promptForProviderKey(setupRl, provider);
+					if (gotKey === null) {
+						// ESC — skip remaining keys
+						break;
+					}
+					if (gotKey) {
+						gotAnyKey = true;
+						// For multi-provider agents, one key is enough
+						if (agent.needsAnyKey) break;
+					}
+				}
+
+				if (!gotAnyKey && !agent.needsAnyKey) {
+					console.log(`\n  ${c.dim}No key provided. Try another agent or set keys in .env${c.reset}\n`);
+					continue;
+				}
 			}
 
-			// Auto-select default model for chosen provider
-			currentProviderName = provider.piProvider;
-			const defaultModel = getDefaultModelForProvider(provider.piProvider);
-			if (defaultModel) {
-				currentModelId = defaultModel;
-				saveModelPreference(currentModelId);
-				console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
+			// Auto-select default model from whichever provider has a key
+			const activeProvider = Object.keys(PROVIDER_KEYS).find((p) => process.env[providerEnvKey(p)]);
+			if (activeProvider) {
+				currentProviderName = activeProvider;
+				const defaultModel = getDefaultModelForProvider(activeProvider);
+				if (defaultModel) {
+					currentModelId = defaultModel;
+					saveModelPreference(currentModelId);
+					console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
+				}
 			}
 			console.log();
 			setupDone = true;
