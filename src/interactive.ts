@@ -9,6 +9,7 @@
  */
 
 import "./env.js";
+import { execFileSync, execSync, spawn as spawnChild } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -343,6 +344,119 @@ function handleMultiLineAsContext(input: string): { context: string; query: stri
 
 // ── Banner ──────────────────────────────────────────────────────────────────
 
+// ── Ollama helpers ──────────────────────────────────────────────────────────
+
+function isOllamaInstalled(): boolean {
+	try {
+		execFileSync("ollama", ["--version"], { stdio: ["ignore", "pipe", "pipe"], timeout: 5000 });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function isOllamaModelAvailable(model: string): boolean {
+	try {
+		const output = execFileSync("ollama", ["list"], {
+			encoding: "utf-8",
+			stdio: ["ignore", "pipe", "pipe"],
+			timeout: 10000,
+		});
+		return output.includes(model);
+	} catch {
+		return false;
+	}
+}
+
+async function installOllama(): Promise<boolean> {
+	console.log(`\n  ${c.bold}Installing Ollama...${c.reset}\n`);
+	if (process.platform === "darwin") {
+		// macOS: check for brew first, otherwise use the install script
+		try {
+			execFileSync("brew", ["--version"], { stdio: "ignore", timeout: 5000 });
+			console.log(`  ${c.dim}Using Homebrew...${c.reset}`);
+			try {
+				execSync("brew install ollama", { stdio: "inherit", timeout: 120000 });
+				return true;
+			} catch {
+				console.log(`  ${c.dim}Homebrew install failed, trying curl installer...${c.reset}`);
+			}
+		} catch {
+			// No brew — fall through to curl
+		}
+	}
+	// Linux / macOS fallback: official install script
+	if (process.platform === "linux" || process.platform === "darwin") {
+		try {
+			execSync("curl -fsSL https://ollama.com/install.sh | sh", { stdio: "inherit", timeout: 180000 });
+			return true;
+		} catch {
+			return false;
+		}
+	}
+	// Windows: direct user to download page
+	console.log(`  ${c.dim}Download Ollama from: https://ollama.com/download${c.reset}`);
+	return false;
+}
+
+async function pullOllamaModel(model: string): Promise<boolean> {
+	console.log(`\n  ${c.bold}Pulling ${model}...${c.reset} ${c.dim}(this may take a few minutes)${c.reset}\n`);
+	return new Promise((resolve) => {
+		const child = spawnChild("ollama", ["pull", model], { stdio: "inherit" });
+		child.on("close", (code) => resolve(code === 0));
+		child.on("error", () => resolve(false));
+	});
+}
+
+async function ensureOllamaSetup(rl: readline.Interface, model: string): Promise<boolean> {
+	// 1. Check if Ollama is installed
+	if (!isOllamaInstalled()) {
+		console.log(`\n  ${c.dim}Ollama is not installed. It's needed to run open-source models locally.${c.reset}`);
+		const install = await questionWithEsc(rl, `  ${c.cyan}Install Ollama now? [Y/n]:${c.reset} `);
+		if (install !== null && install.toLowerCase() !== "n" && install.toLowerCase() !== "no") {
+			const ok = await installOllama();
+			if (!ok) {
+				console.log(`\n  ${c.red}Failed to install Ollama.${c.reset}`);
+				console.log(`  ${c.dim}Install manually from https://ollama.com/download${c.reset}\n`);
+				return false;
+			}
+			console.log(`\n  ${c.green}✓${c.reset} Ollama installed\n`);
+		} else {
+			console.log(`\n  ${c.dim}Ollama is required for open-source models.${c.reset}`);
+			console.log(`  ${c.dim}Install later from https://ollama.com/download${c.reset}\n`);
+			return false;
+		}
+	} else {
+		console.log(`\n  ${c.green}✓${c.reset} Ollama installed`);
+	}
+
+	// 2. Check if model is already pulled
+	const shortModel = model.replace("ollama/", "");
+	if (isOllamaModelAvailable(shortModel)) {
+		console.log(`  ${c.green}✓${c.reset} Model ${c.bold}${shortModel}${c.reset} ready\n`);
+		return true;
+	}
+
+	// 3. Pull the model
+	console.log(`  ${c.dim}Model ${shortModel} not found locally.${c.reset}`);
+	const pull = await questionWithEsc(rl, `  ${c.cyan}Pull ${shortModel} now? [Y/n]:${c.reset} `);
+	if (pull !== null && pull.toLowerCase() !== "n" && pull.toLowerCase() !== "no") {
+		const ok = await pullOllamaModel(shortModel);
+		if (!ok) {
+			console.log(`\n  ${c.red}Failed to pull ${shortModel}.${c.reset}`);
+			console.log(`  ${c.dim}Try manually: ollama pull ${shortModel}${c.reset}\n`);
+			return false;
+		}
+		console.log(`\n  ${c.green}✓${c.reset} Model ${c.bold}${shortModel}${c.reset} ready\n`);
+		return true;
+	}
+
+	console.log(`\n  ${c.dim}Run later: ollama pull ${shortModel}${c.reset}\n`);
+	return false;
+}
+
+// ── Banner ──────────────────────────────────────────────────────────────────
+
 function printBanner(): void {
 	console.log(`
 ${c.cyan}${c.bold}
@@ -353,7 +467,7 @@ ${c.cyan}${c.bold}
                ███████║╚███╔███╔╝██║  ██║██║  ██║██║ ╚═╝ ██║
                ╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝
 ${c.reset}
-${c.dim}            Swarm-native coding agent orchestrator${c.reset}
+${c.dim}                Swarm-native coding agent orchestrator${c.reset}
 `);
 }
 
@@ -1458,72 +1572,102 @@ async function interactive(): Promise<void> {
 		let setupDone = false;
 
 		while (!setupDone) {
-			console.log(`  ${c.bold}Select your coding agent:${c.reset}\n`);
+			console.log(`  ${c.bold}Select your coding agent(s):${c.reset}\n`);
 			for (let i = 0; i < AGENT_CHOICES.length; i++) {
 				const a = AGENT_CHOICES[i];
 				console.log(`  ${c.dim}${i + 1}${c.reset}  ${a.name}  ${c.dim}${a.desc}${c.reset}`);
 			}
 			console.log();
+			console.log(`  ${c.dim}Enter numbers separated by commas (e.g. 1,2,3)${c.reset}\n`);
 
-			const choice = await questionWithEsc(setupRl, `  ${c.cyan}Agent [1-${AGENT_CHOICES.length}]:${c.reset} `);
+			const choice = await questionWithEsc(setupRl, `  ${c.cyan}Agent(s) [1-${AGENT_CHOICES.length}]:${c.reset} `);
 			if (choice === null) {
 				console.log(`\n  ${c.dim}Exiting.${c.reset}\n`);
 				setupRl.close();
 				process.exit(0);
 			}
-			const idx = parseInt(choice, 10) - 1;
-			if (Number.isNaN(idx) || idx < 0 || idx >= AGENT_CHOICES.length) {
+
+			// Parse comma-separated selections
+			const indices = choice
+				.split(",")
+				.map((s) => parseInt(s.trim(), 10) - 1)
+				.filter((i) => !Number.isNaN(i) && i >= 0 && i < AGENT_CHOICES.length);
+			// Deduplicate
+			const uniqueIndices = [...new Set(indices)];
+
+			if (uniqueIndices.length === 0) {
 				console.log(`\n  ${c.dim}Invalid choice.${c.reset}\n`);
 				continue;
 			}
 
-			const agent = AGENT_CHOICES[idx];
-			console.log(`\n  ${c.green}✓${c.reset} Agent: ${c.bold}${agent.name}${c.reset}\n`);
+			const selectedAgents = uniqueIndices.map((i) => AGENT_CHOICES[i]);
+			console.log();
+			for (const agent of selectedAgents) {
+				console.log(`  ${c.green}✓${c.reset} ${c.bold}${agent.name}${c.reset}`);
+			}
+			console.log();
 
-			// Prompt for API key(s) one by one based on the selected agent
-			let gotAnyKey = false;
-			if (agent.requiresKey) {
-				// Agent requires at least one key — prompt until we get one
-				console.log(`  ${c.dim}${agent.name} requires an API key. Configure one now:${c.reset}\n`);
-				for (const provider of agent.keys) {
-					const gotKey = await promptForProviderKey(setupRl, provider);
-					if (gotKey === null) break; // ESC — skip remaining
-					if (gotKey) {
-						gotAnyKey = true;
-						break; // Got one — that's enough
-					}
-				}
-				if (!gotAnyKey) {
-					console.log(`\n  ${c.dim}No key provided. Try another agent or set keys in .env${c.reset}\n`);
-					continue;
-				}
-			} else {
-				// Agent works without keys (e.g. OpenCode with open-source models)
-				// Offer to configure a provider key optionally
-				console.log(`  ${c.dim}${agent.name} works with open-source models (no API key needed).${c.reset}`);
-				console.log(`  ${c.dim}Optionally configure a provider for cloud models:${c.reset}\n`);
-				for (const provider of agent.keys) {
-					console.log(`    ${c.dim}-${c.reset} ${provider.name} ${c.dim}(${provider.env})${c.reset}`);
-				}
-				console.log();
+			// Walk through each selected agent and configure keys
+			const configuredProviders = new Set<string>();
 
-				const addKey = await questionWithEsc(setupRl, `  ${c.cyan}Add an API key? [y/N]:${c.reset} `);
-				if (addKey !== null && (addKey.toLowerCase() === "y" || addKey.toLowerCase() === "yes")) {
+			for (const agent of selectedAgents) {
+				if (agent.requiresKey) {
+					console.log(`  ${c.bold}${agent.name}${c.reset} ${c.dim}requires an API key. Configure one now:${c.reset}\n`);
 					for (const provider of agent.keys) {
+						// Skip providers already configured in this session
+						if (configuredProviders.has(provider.env)) {
+							console.log(`  ${c.green}✓${c.reset} ${provider.name} ${c.dim}(already configured)${c.reset}`);
+							continue;
+						}
 						const gotKey = await promptForProviderKey(setupRl, provider);
-						if (gotKey === null) break;
+						if (gotKey === null) break; // ESC — skip remaining
 						if (gotKey) {
-							gotAnyKey = true;
-							break;
+							configuredProviders.add(provider.env);
+							break; // Got one — enough for this agent
 						}
 					}
+					// Check if this agent still has no key
+					const agentHasKey = agent.keys.some((p) => configuredProviders.has(p.env) || process.env[p.env]);
+					if (!agentHasKey) {
+						console.log(
+							`\n  ${c.dim}No key for ${agent.name} — it won't be available until a key is set in .env${c.reset}\n`,
+						);
+					}
+				} else {
+					// Agent works without keys (e.g. OpenCode with open-source models)
+					console.log(
+						`  ${c.bold}${agent.name}${c.reset} ${c.dim}works with open-source models (no API key needed).${c.reset}`,
+					);
+					console.log(`  ${c.dim}You can run locally with Ollama, or add a cloud API key.${c.reset}\n`);
+					const setupChoice = await questionWithEsc(
+						setupRl,
+						`  ${c.cyan}Set up with: [1] Ollama (open-source)  [2] API key  [1]:${c.reset} `,
+					);
+					const wantsApiKey = setupChoice !== null && setupChoice.trim() === "2";
+					if (wantsApiKey) {
+						for (const provider of agent.keys) {
+							if (configuredProviders.has(provider.env)) {
+								console.log(`  ${c.green}✓${c.reset} ${provider.name} ${c.dim}(already configured)${c.reset}`);
+								continue;
+							}
+							const gotKey = await promptForProviderKey(setupRl, provider);
+							if (gotKey === null) break;
+							if (gotKey) {
+								configuredProviders.add(provider.env);
+								break;
+							}
+						}
+					} else {
+						// Set up Ollama + pull model
+						await ensureOllamaSetup(setupRl, "ollama/deepseek-coder-v2");
+					}
+					console.log();
 				}
 			}
 
 			// Set default model
 			const activeProvider = Object.keys(PROVIDER_KEYS).find((p) => process.env[providerEnvKey(p)]);
 			if (activeProvider) {
-				// Has an API key — use that provider's default model
 				currentProviderName = activeProvider;
 				const defaultModel = getDefaultModelForProvider(activeProvider);
 				if (defaultModel) {
@@ -1532,11 +1676,10 @@ async function interactive(): Promise<void> {
 					console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
 				}
 			} else {
-				// No API key — default to open-source model via OpenCode
 				currentModelId = "ollama/deepseek-coder-v2";
 				saveModelPreference(currentModelId);
 				console.log(
-					`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset} ${c.dim}(open-source, requires Ollama)${c.reset}`,
+					`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset} ${c.dim}(open-source)${c.reset}`,
 				);
 			}
 			console.log();
@@ -1575,8 +1718,21 @@ async function interactive(): Promise<void> {
 	}
 
 	if (!currentModel) {
+		if (currentModelId.startsWith("ollama/")) {
+			// Ollama model selected — this interactive REPL mode needs a cloud API.
+			// Redirect to swarm mode which works with OpenCode + Ollama.
+			console.log(`\n  ${c.green}✓${c.reset} Ollama model selected: ${c.bold}${currentModelId}${c.reset}`);
+			console.log(`\n  ${c.dim}This interactive REPL uses direct LLM API calls.${c.reset}`);
+			console.log(`  ${c.dim}To use Ollama models with OpenCode, run:${c.reset}\n`);
+			console.log(`  ${c.bold}swarm --dir ./your-project "your task"${c.reset}\n`);
+			process.exit(0);
+		}
 		console.log(`\n  ${c.red}Model "${currentModelId}" not found.${c.reset}`);
-		console.log(`  Check ${c.bold}RLM_MODEL${c.reset} in your .env file.\n`);
+		console.log(
+			`  Set ${c.bold}ANTHROPIC_API_KEY${c.reset}, ${c.bold}OPENAI_API_KEY${c.reset}, or ${c.bold}GEMINI_API_KEY${c.reset} in your .env file.`,
+		);
+		console.log(`\n  ${c.dim}For agent-based mode (works with open-source models):${c.reset}`);
+		console.log(`  ${c.bold}swarm --dir ./your-project "your task"${c.reset}\n`);
 		process.exit(1);
 	}
 
