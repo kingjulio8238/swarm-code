@@ -22,7 +22,7 @@ const { runRlmLoop } = await import("./core/rlm.js");
 const { loadConfig } = await import("./config.js");
 
 // Register agent backends
-await import("./agents/opencode.js");
+const opencodeMod = await import("./agents/opencode.js");
 await import("./agents/direct-llm.js");
 await import("./agents/claude-code.js");
 await import("./agents/codex.js");
@@ -369,6 +369,12 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 		}
 	};
 
+	// Enable OpenCode server mode for persistent connections (reduces cold-start)
+	if (config.default_agent === "opencode" && config.opencode_server_mode) {
+		opencodeMod.enableServerMode();
+		logVerbose("OpenCode server mode enabled");
+	}
+
 	// Initialize thread manager
 	const threadManager = new ThreadManager(args.dir, config, threadProgress, ac.signal);
 	await threadManager.init();
@@ -576,5 +582,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 		process.removeListener("SIGTERM", abortAndExit);
 		repl.shutdown();
 		await threadManager.cleanup();
+		// Shut down any managed OpenCode server instances
+		await opencodeMod.disableServerMode();
 	}
 }

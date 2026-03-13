@@ -38,6 +38,10 @@ max_session_budget_usd: 10.00
 # Default agent backend (opencode, claude-code, codex, aider, direct-llm)
 default_agent: opencode
 
+# Use persistent OpenCode server mode (reduces cold-start latency)
+# When enabled, swarm manages `opencode serve` instances and connects via HTTP API
+opencode_server_mode: true
+
 # Default model for coding agents (provider/model-id format)
 default_model: anthropic/claude-sonnet-4-6
 
