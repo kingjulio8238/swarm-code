@@ -156,6 +156,52 @@ Swarm runs, creates a PR with the changes, and posts a summary back on the issue
 
 **Action outputs**: `success`, `pr_url`, `cost_usd`, `threads_completed`, `threads_failed`, `elapsed_s`, `answer`, `skipped`, `skip_reason`
 
+### MCP Server
+
+Expose swarm as tools for Claude Code, Cursor, or any MCP-compatible agent:
+
+```bash
+swarm mcp                       # Start MCP server (stdio)
+swarm mcp --dir ./my-project    # Start with default directory
+```
+
+**Tools exposed:**
+
+| Tool | Description |
+|------|-------------|
+| `swarm_run` | Full swarm orchestration — decompose, spawn threads, merge, return result |
+| `swarm_thread` | Spawn a single coding agent in an isolated worktree |
+| `swarm_status` | Get session status — threads, budget, costs |
+| `swarm_merge` | Merge completed thread branches back to main |
+| `swarm_cancel` | Cancel running thread(s) |
+| `swarm_cleanup` | Destroy session and clean up worktrees |
+
+**Claude Code setup:**
+
+```bash
+claude mcp add swarm-cli -- npx swarm-cli mcp
+```
+
+Or add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "swarm-cli": {
+      "command": "npx",
+      "args": ["swarm-cli", "mcp", "--dir", "."],
+      "env": {
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+**Cursor setup:** Add to `.cursor/mcp.json` with the same format.
+
+Once configured, Claude Code or Cursor can call `swarm_thread` to spawn coding agents in worktrees, check progress with `swarm_status`, and merge with `swarm_merge` — giving the host agent full orchestration control.
+
 ### Trajectory Viewer
 
 ```bash
@@ -307,6 +353,10 @@ src/
 │   └── episodic.ts            Cross-session strategy learning
 ├── prompts/
 │   └── orchestrator.ts        Swarm system prompt
+├── mcp/
+│   ├── server.ts              MCP server entry point (stdio transport)
+│   ├── tools.ts               Tool definitions + handlers
+│   └── session.ts             Per-directory session state
 ├── ui/
 │   ├── onboarding.ts          First-run setup wizard
 │   ├── spinner.ts             CLI spinner

@@ -35,6 +35,7 @@ npm run build
 - `src/compression/` — Result compression with episode quality filtering (success-only output)
 - `src/prompts/orchestrator.ts` — Swarm orchestrator system prompt with DAG composition examples
 - `src/viewer.ts` — Trajectory TUI viewer with swarm thread DAG visualization, timing bars, cost breakdowns
+- `src/mcp/` — MCP server: exposes swarm as tools for Claude Code, Cursor, etc. (server, tools, session)
 - `src/ui/` — CLI UI components (onboarding wizard, spinner, dashboard, session summary)
 - `action/` — GitHub Actions composite action (entrypoint, trigger parsing, security, PR creation)
 
@@ -73,3 +74,4 @@ JSON protocol between Python and TypeScript:
 - **Failure tracking**: FailureTracker class uses exponential-decay weighting to penalize recently-failed agent/model pairs in routing decisions
 - **Interactive mode**: Session-persistent REPL with /threads, /merge, /reject, /dag, /budget commands and SIGINT handling (single=cancel task, double=exit)
 - **GitHub Action**: Composite action triggered by `@swarm` in issue comments or workflow_dispatch. Security: author association check, fork PR rejection, $50 budget hard cap. Creates PRs and posts result comments.
+- **MCP server**: Exposes 6 tools (swarm_run, swarm_thread, swarm_status, swarm_merge, swarm_cancel, swarm_cleanup) over stdio transport. Per-directory sessions with lazy-init ThreadManager/WorktreeManager. Claude Code: `claude mcp add swarm-cli -- npx swarm-cli mcp`

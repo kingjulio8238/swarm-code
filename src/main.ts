@@ -46,6 +46,11 @@ export function buildHelp(): string {
 	lines.push(`    ${yellow("swarm")} --dir ./project              ${dim("Interactive REPL (no query)")}`);
 
 	lines.push("");
+	lines.push(`  ${bold("MCP SERVER")} ${dim("(expose swarm as tools for Claude Code, Cursor, etc.)")}`);
+	lines.push(`    ${yellow("swarm mcp")}                       ${dim("Start MCP server (stdio)")}`);
+	lines.push(`    ${yellow("swarm mcp")} --dir ./project       ${dim("Start with default directory")}`);
+
+	lines.push("");
 	lines.push(`  ${bold("RLM MODE")} ${dim("(text processing, inherited from rlm-cli)")}`);
 	lines.push(`    ${yellow("swarm")}                          ${dim("Interactive terminal (default)")}`);
 	lines.push(`    ${yellow("swarm run")} [options] "<query>"  ${dim("Run a single query")}`);
@@ -149,6 +154,12 @@ async function main() {
 		case "view": {
 			process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
 			await import("./viewer.js");
+			break;
+		}
+
+		case "mcp": {
+			const { startMcpServer } = await import("./mcp/server.js");
+			await startMcpServer(args.slice(1));
 			break;
 		}
 

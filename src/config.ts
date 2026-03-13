@@ -123,14 +123,15 @@ function parseYaml(text: string): Record<string, unknown> {
 	return result;
 }
 
-export function loadConfig(): SwarmConfig {
+export function loadConfig(cwd?: string): SwarmConfig {
 	// Search order: cwd swarm_config, cwd rlm_config, package root swarm_config, package root rlm_config
 	// User prefs (~/.swarm/config.yaml) are overlaid on top of the first found project config
+	const projectDir = cwd || process.cwd();
 	const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 	const userConfigPath = path.join(os.homedir(), ".swarm", "config.yaml");
 	const candidates = [
-		path.resolve(process.cwd(), "swarm_config.yaml"),
-		path.resolve(process.cwd(), "rlm_config.yaml"),
+		path.resolve(projectDir, "swarm_config.yaml"),
+		path.resolve(projectDir, "rlm_config.yaml"),
 		path.resolve(pkgRoot, "swarm_config.yaml"),
 		path.resolve(pkgRoot, "rlm_config.yaml"),
 	];
