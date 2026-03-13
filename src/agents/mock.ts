@@ -76,6 +76,12 @@ const mockProvider: AgentProvider = {
 			filesChanged,
 			diff: "", // Diff is captured by worktree manager
 			durationMs: Date.now() - startTime,
+			// Simulate token usage for testing budget tracking
+			usage: {
+				inputTokens: 1500,
+				outputTokens: 800,
+				totalTokens: 2300,
+			},
 		};
 	},
 };

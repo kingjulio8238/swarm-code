@@ -42,7 +42,14 @@ export function renderSummary(summary: SessionSummary): void {
 			budget: {
 				spent_usd: summary.budget.totalSpentUsd,
 				limit_usd: summary.budget.sessionLimitUsd,
+				actual_cost_threads: summary.budget.actualCostThreads,
+				estimated_cost_threads: summary.budget.estimatedCostThreads,
 			},
+			tokens: summary.budget.totalTokens ? {
+				input: summary.budget.totalTokens.input,
+				output: summary.budget.totalTokens.output,
+				total: summary.budget.totalTokens.input + summary.budget.totalTokens.output,
+			} : undefined,
 			cache: summary.cacheStats ? {
 				hits: summary.cacheStats.hits,
 				misses: summary.cacheStats.misses,
@@ -79,12 +86,22 @@ export function renderSummary(summary: SessionSummary): void {
 
 		process.stderr.write(`  ${dim("Threads")}  ${parts.join(dim("  " + symbols.dot + "  "))}\n`);
 
-		// Budget
+		// Budget with actual vs estimated breakdown
 		const spent = summary.budget.totalSpentUsd;
 		const limit = summary.budget.sessionLimitUsd;
 		const pct = limit > 0 ? (spent / limit * 100).toFixed(0) : "0";
 		const budgetColor = spent > limit * 0.8 ? yellow : dim;
-		process.stderr.write(`  ${dim("Budget")}   ${budgetColor(`$${spent.toFixed(4)} / $${limit.toFixed(2)} (${pct}%)`)}\n`);
+		const costSource = summary.budget.actualCostThreads > 0
+			? dim(` (${summary.budget.actualCostThreads} actual, ${summary.budget.estimatedCostThreads} estimated)`)
+			: dim(" (estimated)");
+		process.stderr.write(`  ${dim("Budget")}   ${budgetColor(`$${spent.toFixed(4)} / $${limit.toFixed(2)} (${pct}%)`)}${costSource}\n`);
+
+		// Token usage (if any real usage data)
+		const tokens = summary.budget.totalTokens;
+		if (tokens && (tokens.input > 0 || tokens.output > 0)) {
+			const totalK = ((tokens.input + tokens.output) / 1000).toFixed(1);
+			process.stderr.write(`  ${dim("Tokens")}   ${dim(`${tokens.input.toLocaleString()} in + ${tokens.output.toLocaleString()} out (${totalK}K total)`)}\n`);
+		}
 
 		// Cache stats
 		if (summary.cacheStats && (summary.cacheStats.hits > 0 || summary.cacheStats.size > 0)) {

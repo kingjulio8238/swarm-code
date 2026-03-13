@@ -38,6 +38,20 @@ interface OpenCodeJsonOutput {
 		tool_results?: Array<{ name: string; output: string }>;
 	}>;
 	error?: string;
+	/** Token usage reported by OpenCode (if available). */
+	usage?: {
+		input_tokens?: number;
+		output_tokens?: number;
+		total_tokens?: number;
+		prompt_tokens?: number;
+		completion_tokens?: number;
+	};
+	/** Alternative usage location — some versions report per-message usage. */
+	total_usage?: {
+		input_tokens?: number;
+		output_tokens?: number;
+		total_tokens?: number;
+	};
 }
 
 /** Extract JSON object from mixed stdout (may contain non-JSON lines before/after). */
@@ -57,8 +71,13 @@ function extractJson(raw: string): OpenCodeJsonOutput | null {
 	}
 }
 
-/** Extract output text and file changes from parsed JSON. */
-function extractFromParsed(parsed: OpenCodeJsonOutput): { output: string; filesChanged: string[]; error?: string } {
+/** Extract output text, file changes, and token usage from parsed JSON. */
+function extractFromParsed(parsed: OpenCodeJsonOutput): {
+	output: string;
+	filesChanged: string[];
+	error?: string;
+	usage?: import("../core/types.js").TokenUsage;
+} {
 	if (parsed.error) {
 		return { output: parsed.error, filesChanged: [], error: parsed.error };
 	}
@@ -86,7 +105,22 @@ function extractFromParsed(parsed: OpenCodeJsonOutput): { output: string; filesC
 		}
 	}
 
-	return { output, filesChanged: [...new Set(filesChanged)] };
+	// Extract token usage from various possible locations
+	let usage: import("../core/types.js").TokenUsage | undefined;
+	const u = (parsed.usage || parsed.total_usage) as Record<string, number | undefined> | undefined;
+	if (u) {
+		const inputTokens = u.input_tokens || u.prompt_tokens || 0;
+		const outputTokens = u.output_tokens || u.completion_tokens || 0;
+		if (inputTokens > 0 || outputTokens > 0) {
+			usage = {
+				inputTokens,
+				outputTokens,
+				totalTokens: u.total_tokens || (inputTokens + outputTokens),
+			};
+		}
+	}
+
+	return { output, filesChanged: [...new Set(filesChanged)], usage };
 }
 
 /** Whitelist of env vars safe to pass to agent subprocess. */
@@ -481,6 +515,7 @@ function runSubprocess(
 			let output = stdout;
 
 			const parsed = extractJson(stdout);
+			let usage: import("../core/types.js").TokenUsage | undefined;
 			if (parsed) {
 				const extracted = extractFromParsed(parsed);
 				if (extracted.error) {
@@ -491,11 +526,13 @@ function runSubprocess(
 						diff: "",
 						durationMs,
 						error: extracted.error,
+						usage: extracted.usage,
 					});
 					return;
 				}
 				if (extracted.output) output = extracted.output;
 				filesChanged = extracted.filesChanged;
+				usage = extracted.usage;
 			}
 
 			doResolve({
@@ -505,6 +542,7 @@ function runSubprocess(
 				diff: "",
 				durationMs,
 				error: code !== 0 ? `opencode exited with code ${code}${stderr ? `: ${stderr.slice(0, 500)}` : ""}` : undefined,
+				usage,
 			});
 		});
 

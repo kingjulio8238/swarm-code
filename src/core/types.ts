@@ -4,6 +4,13 @@
 
 // ── Agent types ─────────────────────────────────────────────────────────────
 
+/** Token usage reported by the agent (when available). */
+export interface TokenUsage {
+	inputTokens: number;
+	outputTokens: number;
+	totalTokens: number;
+}
+
 export interface AgentResult {
 	success: boolean;
 	output: string;
@@ -11,6 +18,8 @@ export interface AgentResult {
 	diff: string;
 	durationMs: number;
 	error?: string;
+	/** Actual token usage from the agent (if reported). */
+	usage?: TokenUsage;
 }
 
 export interface AgentRunOptions {
@@ -77,6 +86,10 @@ export interface CompressedResult {
 	diffStats: string;
 	durationMs: number;
 	estimatedCostUsd: number;
+	/** Actual token usage (when available from agent). */
+	usage?: TokenUsage;
+	/** Whether cost is based on real usage or estimates. */
+	costIsEstimate?: boolean;
 }
 
 // ── Worktree types ──────────────────────────────────────────────────────────
@@ -102,6 +115,12 @@ export interface BudgetState {
 	threadCosts: Map<string, number>;
 	sessionLimitUsd: number;
 	perThreadLimitUsd: number;
+	/** Total tokens consumed across all threads. */
+	totalTokens: { input: number; output: number };
+	/** Number of threads with actual (non-estimated) cost data. */
+	actualCostThreads: number;
+	/** Number of threads with estimated cost data. */
+	estimatedCostThreads: number;
 }
 
 /** Rough per-1M-token pricing for cost estimation. */

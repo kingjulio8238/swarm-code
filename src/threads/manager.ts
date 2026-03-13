@@ -82,6 +82,10 @@ class BudgetTracker {
 	private threadCosts: Map<string, number> = new Map();
 	private sessionLimit: number;
 	private perThreadLimit: number;
+	private totalInputTokens: number = 0;
+	private totalOutputTokens: number = 0;
+	private actualCostCount: number = 0;
+	private estimatedCostCount: number = 0;
 
 	constructor(sessionLimit: number, perThreadLimit: number) {
 		this.sessionLimit = sessionLimit;
@@ -90,15 +94,26 @@ class BudgetTracker {
 
 	/** Estimate cost for a thread based on model and assumed token usage. */
 	estimateThreadCost(model: string): number {
-		// Extract model name from provider/model format
 		const modelName = model.includes("/") ? model.split("/").pop()! : model;
 		const pricing = PRICING[modelName];
-		if (!pricing) return 0.05; // Default estimate if model unknown
+		if (!pricing) return 0.05;
 
 		// Assume ~4K input tokens, ~2K output tokens per thread execution
 		const inputTokens = 4000;
 		const outputTokens = 2000;
 		return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+	}
+
+	/**
+	 * Calculate actual cost from real token usage.
+	 * Returns null if pricing for the model is unknown.
+	 */
+	calculateActualCost(model: string, usage: { inputTokens: number; outputTokens: number }): number | null {
+		const modelName = model.includes("/") ? model.split("/").pop()! : model;
+		const pricing = PRICING[modelName];
+		if (!pricing) return null;
+
+		return (usage.inputTokens * pricing.input + usage.outputTokens * pricing.output) / 1_000_000;
 	}
 
 	/** Check if we can afford to spawn a thread. */
@@ -122,10 +137,43 @@ class BudgetTracker {
 		return { allowed: true };
 	}
 
-	/** Record cost for a completed thread. */
-	recordCost(threadId: string, cost: number): void {
+	/**
+	 * Record cost for a completed thread.
+	 * Uses actual usage when available, falls back to estimate.
+	 */
+	recordCost(
+		threadId: string,
+		model: string,
+		usage?: { inputTokens: number; outputTokens: number },
+	): { cost: number; isEstimate: boolean } {
+		let cost: number;
+		let isEstimate: boolean;
+
+		if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
+			// Use real token counts
+			const actual = this.calculateActualCost(model, usage);
+			if (actual !== null) {
+				cost = actual;
+				isEstimate = false;
+				this.actualCostCount++;
+			} else {
+				// Have tokens but no pricing — estimate
+				cost = this.estimateThreadCost(model);
+				isEstimate = true;
+				this.estimatedCostCount++;
+			}
+			this.totalInputTokens += usage.inputTokens;
+			this.totalOutputTokens += usage.outputTokens;
+		} else {
+			// No usage data — estimate
+			cost = this.estimateThreadCost(model);
+			isEstimate = true;
+			this.estimatedCostCount++;
+		}
+
 		this.threadCosts.set(threadId, cost);
 		this.totalSpent += cost;
+		return { cost, isEstimate };
 	}
 
 	get spent(): number {
@@ -138,6 +186,12 @@ class BudgetTracker {
 			threadCosts: new Map(this.threadCosts),
 			sessionLimitUsd: this.sessionLimit,
 			perThreadLimitUsd: this.perThreadLimit,
+			totalTokens: {
+				input: this.totalInputTokens,
+				output: this.totalOutputTokens,
+			},
+			actualCostThreads: this.actualCostCount,
+			estimatedCostThreads: this.estimatedCostCount,
 		};
 	}
 }
@@ -510,11 +564,19 @@ export class ThreadManager {
 				this.config.compression_max_tokens,
 			);
 
-			// Estimate cost and record
+			// Record cost — uses real usage when available, falls back to estimate
 			const model = threadConfig.agent.model || this.config.default_model;
-			const estimatedCost = this.budget.estimateThreadCost(model);
-			this.budget.recordCost(threadId, estimatedCost);
-			state.estimatedCostUsd = estimatedCost;
+			const { cost, isEstimate } = this.budget.recordCost(
+				threadId,
+				model,
+				agentResult.usage,
+			);
+			state.estimatedCostUsd = cost;
+
+			const costLabel = isEstimate ? `~$${cost.toFixed(4)}` : `$${cost.toFixed(4)}`;
+			const usageLabel = agentResult.usage
+				? ` (${agentResult.usage.inputTokens}+${agentResult.usage.outputTokens} tokens)`
+				: "";
 
 			const result: CompressedResult = {
 				success: agentResult.success,
@@ -522,7 +584,9 @@ export class ThreadManager {
 				filesChanged,
 				diffStats,
 				durationMs: Date.now() - state.startedAt!,
-				estimatedCostUsd: estimatedCost,
+				estimatedCostUsd: cost,
+				usage: agentResult.usage,
+				costIsEstimate: isEstimate,
 			};
 
 			state.status = "completed";
@@ -530,7 +594,7 @@ export class ThreadManager {
 			state.result = result;
 			state.completedAt = Date.now();
 			this.onThreadProgress?.(threadId, "completed",
-				`${filesChanged.length} files, ~$${estimatedCost.toFixed(4)}`);
+				`${filesChanged.length} files, ${costLabel}${usageLabel}`);
 
 			// Cache successful results for subthread reuse
 			if (result.success) {
@@ -554,7 +618,7 @@ export class ThreadManager {
 						complexity: "",
 						success: true,
 						durationMs: result.durationMs,
-						estimatedCostUsd: estimatedCost,
+						estimatedCostUsd: cost,
 						filesChanged: filesChanged,
 						summary: compressed,
 					}).catch(() => {}); // Non-fatal
