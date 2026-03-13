@@ -399,6 +399,27 @@ async function installOllama(): Promise<boolean> {
 	return false;
 }
 
+function isOllamaServing(): boolean {
+	try {
+		execFileSync("curl", ["-sf", "http://127.0.0.1:11434/api/tags"], {
+			stdio: ["ignore", "pipe", "pipe"],
+			timeout: 3000,
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function startOllamaServe(): void {
+	// Start ollama serve in the background (detached)
+	const child = spawnChild("ollama", ["serve"], {
+		stdio: "ignore",
+		detached: true,
+	});
+	child.unref();
+}
+
 async function pullOllamaModel(model: string): Promise<boolean> {
 	console.log(`\n  ${c.bold}Pulling ${model}...${c.reset} ${c.dim}(this may take a few minutes)${c.reset}\n`);
 	return new Promise((resolve) => {
@@ -409,6 +430,8 @@ async function pullOllamaModel(model: string): Promise<boolean> {
 }
 
 async function ensureOllamaSetup(rl: readline.Interface, model: string): Promise<boolean> {
+	const shortModel = model.replace("ollama/", "");
+
 	// 1. Check if Ollama is installed
 	if (!isOllamaInstalled()) {
 		console.log(`\n  ${c.dim}Ollama is not installed. It's needed to run open-source models locally.${c.reset}`);
@@ -420,26 +443,46 @@ async function ensureOllamaSetup(rl: readline.Interface, model: string): Promise
 				console.log(`  ${c.dim}Install manually from https://ollama.com/download${c.reset}\n`);
 				return false;
 			}
-			console.log(`\n  ${c.green}✓${c.reset} Ollama installed\n`);
+			console.log(`  ${c.green}✓${c.reset} Ollama installed`);
 		} else {
-			console.log(`\n  ${c.dim}Ollama is required for open-source models.${c.reset}`);
-			console.log(`  ${c.dim}Install later from https://ollama.com/download${c.reset}\n`);
+			console.log(`\n  ${c.dim}Install later from https://ollama.com/download${c.reset}\n`);
 			return false;
 		}
 	} else {
-		console.log(`\n  ${c.green}✓${c.reset} Ollama installed`);
+		console.log(`  ${c.green}✓${c.reset} Ollama installed`);
 	}
 
-	// 2. Check if model is already pulled
-	const shortModel = model.replace("ollama/", "");
+	// 2. Ensure ollama serve is running
+	if (!isOllamaServing()) {
+		console.log(`  ${c.dim}Starting Ollama server...${c.reset}`);
+		startOllamaServe();
+		// Give it a moment to start
+		let retries = 10;
+		while (retries > 0 && !isOllamaServing()) {
+			await new Promise((r) => setTimeout(r, 1000));
+			retries--;
+		}
+		if (isOllamaServing()) {
+			console.log(`  ${c.green}✓${c.reset} Ollama server running`);
+		} else {
+			console.log(
+				`  ${c.yellow}⚠${c.reset} Could not start Ollama server. Run ${c.bold}ollama serve${c.reset} manually.`,
+			);
+			return false;
+		}
+	} else {
+		console.log(`  ${c.green}✓${c.reset} Ollama server running`);
+	}
+
+	// 3. Check if model is already pulled
 	if (isOllamaModelAvailable(shortModel)) {
 		console.log(`  ${c.green}✓${c.reset} Model ${c.bold}${shortModel}${c.reset} ready\n`);
 		return true;
 	}
 
-	// 3. Pull the model
+	// 4. Pull the model
 	console.log(`  ${c.dim}Model ${shortModel} not found locally.${c.reset}`);
-	const pull = await questionWithEsc(rl, `  ${c.cyan}Pull ${shortModel} now? [Y/n]:${c.reset} `);
+	const pull = await questionWithEsc(rl, `\n  ${c.cyan}Pull ${shortModel} now? [Y/n]:${c.reset} `);
 	if (pull !== null && pull.toLowerCase() !== "n" && pull.toLowerCase() !== "no") {
 		const ok = await pullOllamaModel(shortModel);
 		if (!ok) {
@@ -447,12 +490,82 @@ async function ensureOllamaSetup(rl: readline.Interface, model: string): Promise
 			console.log(`  ${c.dim}Try manually: ollama pull ${shortModel}${c.reset}\n`);
 			return false;
 		}
-		console.log(`\n  ${c.green}✓${c.reset} Model ${c.bold}${shortModel}${c.reset} ready\n`);
+		console.log(`  ${c.green}✓${c.reset} Model ${c.bold}${shortModel}${c.reset} ready\n`);
 		return true;
 	}
 
 	console.log(`\n  ${c.dim}Run later: ollama pull ${shortModel}${c.reset}\n`);
 	return false;
+}
+
+// ── Checkbox multi-select ───────────────────────────────────────────────────
+
+interface CheckboxItem {
+	label: string;
+	desc: string;
+	checked: boolean;
+}
+
+/**
+ * Interactive checkbox selector — arrow keys to navigate, space to toggle, enter to confirm.
+ * Returns indices of selected items.
+ */
+function checkboxSelect(items: CheckboxItem[]): Promise<number[]> {
+	return new Promise((resolve) => {
+		let cursor = 0;
+
+		const render = () => {
+			// Move cursor up to overwrite previous render (except first time)
+			if (rendered) {
+				process.stdout.write(`\x1b[${items.length}A`);
+			}
+			for (let i = 0; i < items.length; i++) {
+				const item = items[i];
+				const pointer = i === cursor ? `${c.cyan}❯${c.reset}` : " ";
+				const box = item.checked ? `${c.green}◼${c.reset}` : `${c.dim}◻${c.reset}`;
+				const label = i === cursor ? `${c.bold}${item.label}${c.reset}` : item.label;
+				const desc = `${c.dim}${item.desc}${c.reset}`;
+				process.stdout.write(`\x1b[2K  ${pointer} ${box} ${label}  ${desc}\n`);
+			}
+		};
+
+		let rendered = false;
+		render();
+		rendered = true;
+
+		const wasRaw = stdin.isRaw;
+		if (stdin.isTTY) stdin.setRawMode(true);
+
+		const onData = (data: Buffer) => {
+			const key = data.toString();
+			if (key === "\x1b[A" || key === "k") {
+				// Up
+				cursor = (cursor - 1 + items.length) % items.length;
+				render();
+			} else if (key === "\x1b[B" || key === "j") {
+				// Down
+				cursor = (cursor + 1) % items.length;
+				render();
+			} else if (key === " ") {
+				// Toggle
+				items[cursor].checked = !items[cursor].checked;
+				render();
+			} else if (key === "\r" || key === "\n") {
+				// Confirm
+				stdin.removeListener("data", onData);
+				if (stdin.isTTY) stdin.setRawMode(wasRaw ?? false);
+				const selected = items.map((item, i) => (item.checked ? i : -1)).filter((i) => i >= 0);
+				resolve(selected);
+			} else if (key === "\x1b" || key === "\x03") {
+				// Escape or Ctrl+C
+				stdin.removeListener("data", onData);
+				if (stdin.isTTY) stdin.setRawMode(wasRaw ?? false);
+				resolve([]);
+			}
+		};
+
+		stdin.on("data", onData);
+	});
 }
 
 // ── Banner ──────────────────────────────────────────────────────────────────
@@ -1568,123 +1681,83 @@ async function interactive(): Promise<void> {
 			},
 		];
 
-		const setupRl = readline.createInterface({ input: stdin, output: stdout, terminal: true });
-		let setupDone = false;
+		// ── Step 1: Checkbox agent selection ─────────────────────────
+		console.log(`  ${c.bold}Select your coding agent(s):${c.reset}`);
+		console.log(`  ${c.dim}↑/↓ navigate  ·  space toggle  ·  enter confirm${c.reset}\n`);
 
-		while (!setupDone) {
-			console.log(`  ${c.bold}Select your coding agent(s):${c.reset}\n`);
-			for (let i = 0; i < AGENT_CHOICES.length; i++) {
-				const a = AGENT_CHOICES[i];
-				console.log(`  ${c.dim}${i + 1}${c.reset}  ${a.name}  ${c.dim}${a.desc}${c.reset}`);
-			}
-			console.log();
-			console.log(`  ${c.dim}Enter numbers separated by commas (e.g. 1,2,3)${c.reset}\n`);
+		const checkboxItems: CheckboxItem[] = AGENT_CHOICES.map((a) => ({
+			label: a.name,
+			desc: a.desc,
+			checked: false,
+		}));
 
-			const choice = await questionWithEsc(setupRl, `  ${c.cyan}Agent(s) [1-${AGENT_CHOICES.length}]:${c.reset} `);
-			if (choice === null) {
-				console.log(`\n  ${c.dim}Exiting.${c.reset}\n`);
-				setupRl.close();
-				process.exit(0);
-			}
+		const selectedIndices = await checkboxSelect(checkboxItems);
 
-			// Parse comma-separated selections
-			const indices = choice
-				.split(",")
-				.map((s) => parseInt(s.trim(), 10) - 1)
-				.filter((i) => !Number.isNaN(i) && i >= 0 && i < AGENT_CHOICES.length);
-			// Deduplicate
-			const uniqueIndices = [...new Set(indices)];
-
-			if (uniqueIndices.length === 0) {
-				console.log(`\n  ${c.dim}Invalid choice.${c.reset}\n`);
-				continue;
-			}
-
-			const selectedAgents = uniqueIndices.map((i) => AGENT_CHOICES[i]);
-			console.log();
-			for (const agent of selectedAgents) {
-				console.log(`  ${c.green}✓${c.reset} ${c.bold}${agent.name}${c.reset}`);
-			}
-			console.log();
-
-			// Walk through each selected agent and configure keys
-			const configuredProviders = new Set<string>();
-
-			for (const agent of selectedAgents) {
-				if (agent.requiresKey) {
-					console.log(`  ${c.bold}${agent.name}${c.reset} ${c.dim}requires an API key. Configure one now:${c.reset}\n`);
-					for (const provider of agent.keys) {
-						// Skip providers already configured in this session
-						if (configuredProviders.has(provider.env)) {
-							console.log(`  ${c.green}✓${c.reset} ${provider.name} ${c.dim}(already configured)${c.reset}`);
-							continue;
-						}
-						const gotKey = await promptForProviderKey(setupRl, provider);
-						if (gotKey === null) break; // ESC — skip remaining
-						if (gotKey) {
-							configuredProviders.add(provider.env);
-							break; // Got one — enough for this agent
-						}
-					}
-					// Check if this agent still has no key
-					const agentHasKey = agent.keys.some((p) => configuredProviders.has(p.env) || process.env[p.env]);
-					if (!agentHasKey) {
-						console.log(
-							`\n  ${c.dim}No key for ${agent.name} — it won't be available until a key is set in .env${c.reset}\n`,
-						);
-					}
-				} else {
-					// Agent works without keys (e.g. OpenCode with open-source models)
-					console.log(
-						`  ${c.bold}${agent.name}${c.reset} ${c.dim}works with open-source models (no API key needed).${c.reset}`,
-					);
-					console.log(`  ${c.dim}You can run locally with Ollama, or add a cloud API key.${c.reset}\n`);
-					const setupChoice = await questionWithEsc(
-						setupRl,
-						`  ${c.cyan}Set up with: [1] Ollama (open-source)  [2] API key  [1]:${c.reset} `,
-					);
-					const wantsApiKey = setupChoice !== null && setupChoice.trim() === "2";
-					if (wantsApiKey) {
-						for (const provider of agent.keys) {
-							if (configuredProviders.has(provider.env)) {
-								console.log(`  ${c.green}✓${c.reset} ${provider.name} ${c.dim}(already configured)${c.reset}`);
-								continue;
-							}
-							const gotKey = await promptForProviderKey(setupRl, provider);
-							if (gotKey === null) break;
-							if (gotKey) {
-								configuredProviders.add(provider.env);
-								break;
-							}
-						}
-					} else {
-						// Set up Ollama + pull model
-						await ensureOllamaSetup(setupRl, "ollama/deepseek-coder-v2");
-					}
-					console.log();
-				}
-			}
-
-			// Set default model
-			const activeProvider = Object.keys(PROVIDER_KEYS).find((p) => process.env[providerEnvKey(p)]);
-			if (activeProvider) {
-				currentProviderName = activeProvider;
-				const defaultModel = getDefaultModelForProvider(activeProvider);
-				if (defaultModel) {
-					currentModelId = defaultModel;
-					saveModelPreference(currentModelId);
-					console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
-				}
-			} else {
-				currentModelId = "ollama/deepseek-coder-v2";
-				saveModelPreference(currentModelId);
-				console.log(
-					`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset} ${c.dim}(open-source)${c.reset}`,
-				);
-			}
-			console.log();
-			setupDone = true;
+		if (selectedIndices.length === 0) {
+			console.log(`\n  ${c.dim}No agents selected. Exiting.${c.reset}\n`);
+			process.exit(0);
 		}
+
+		const selectedAgents = selectedIndices.map((i) => AGENT_CHOICES[i]);
+		console.log();
+		for (const agent of selectedAgents) {
+			console.log(`  ${c.green}✓${c.reset} ${c.bold}${agent.name}${c.reset}`);
+		}
+		console.log();
+
+		// ── Step 2: Configure each agent ─────────────────────────────
+		const setupRl = readline.createInterface({ input: stdin, output: stdout, terminal: true });
+		const configuredProviders = new Set<string>();
+		let usesOllama = false;
+
+		for (const agent of selectedAgents) {
+			if (agent.requiresKey) {
+				// Agent needs at least one API key
+				console.log(`  ${c.bold}${agent.name}${c.reset} ${c.dim}— configure API key:${c.reset}\n`);
+				for (const provider of agent.keys) {
+					if (configuredProviders.has(provider.env) || process.env[provider.env]) {
+						console.log(`  ${c.green}✓${c.reset} ${provider.name} ${c.dim}(already configured)${c.reset}`);
+						continue;
+					}
+					const gotKey = await promptForProviderKey(setupRl, provider);
+					if (gotKey === null) break;
+					if (gotKey) {
+						configuredProviders.add(provider.env);
+						break;
+					}
+				}
+				const agentHasKey = agent.keys.some((p) => configuredProviders.has(p.env) || process.env[p.env]);
+				if (!agentHasKey) {
+					console.log(`  ${c.dim}No key for ${agent.name} — set one in .env later${c.reset}`);
+				}
+				console.log();
+			} else {
+				// Agent works without keys (e.g. OpenCode) — set up Ollama directly
+				console.log(`  ${c.bold}${agent.name}${c.reset} ${c.dim}— setting up Ollama for local models:${c.reset}\n`);
+				const ok = await ensureOllamaSetup(setupRl, "ollama/deepseek-coder-v2");
+				if (ok) usesOllama = true;
+				console.log();
+			}
+		}
+
+		// ── Step 3: Set default model ────────────────────────────────
+		const activeProvider = Object.keys(PROVIDER_KEYS).find((p) => process.env[providerEnvKey(p)]);
+		if (activeProvider) {
+			currentProviderName = activeProvider;
+			const defaultModel = getDefaultModelForProvider(activeProvider);
+			if (defaultModel) {
+				currentModelId = defaultModel;
+				saveModelPreference(currentModelId);
+				console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
+			}
+		} else if (usesOllama) {
+			currentModelId = "ollama/deepseek-coder-v2";
+			saveModelPreference(currentModelId);
+			console.log(
+				`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset} ${c.dim}(local)${c.reset}`,
+			);
+		}
+		console.log();
 		setupRl.close();
 	}
 
