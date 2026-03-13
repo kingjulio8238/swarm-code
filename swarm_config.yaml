@@ -35,7 +35,7 @@ max_thread_budget_usd: 1.00
 # Total session cost cap (USD)
 max_session_budget_usd: 10.00
 
-# Default agent backend (opencode, direct-llm)
+# Default agent backend (opencode, claude-code, codex, aider, direct-llm)
 default_agent: opencode
 
 # Default model for coding agents (provider/model-id format)
