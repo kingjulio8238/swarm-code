@@ -8,3 +8,4 @@ export * from "./banner.js";
 export * from "./spinner.js";
 export * from "./dashboard.js";
 export * from "./summary.js";
+export * from "./onboarding.js";

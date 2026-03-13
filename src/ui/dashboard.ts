@@ -29,6 +29,7 @@ interface ThreadStatus {
  */
 export class ThreadDashboard {
 	private threads: Map<string, ThreadStatus> = new Map();
+	private pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 	private lastLineCount = 0;
 	private enabled: boolean;
 
@@ -73,14 +74,18 @@ export class ThreadDashboard {
 		this.render();
 
 		// Remove completed/failed threads after a brief display
-		setTimeout(() => {
+		const timer = setTimeout(() => {
+			this.pendingTimers.delete(timer);
 			this.threads.delete(id);
 			this.render();
 		}, 1500);
+		this.pendingTimers.add(timer);
 	}
 
-	/** Clear all dashboard output. */
+	/** Clear all dashboard output and cancel pending timers. */
 	clear(): void {
+		for (const timer of this.pendingTimers) clearTimeout(timer);
+		this.pendingTimers.clear();
 		if (!this.enabled) return;
 		this.clearLines();
 		this.threads.clear();

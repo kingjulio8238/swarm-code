@@ -47,15 +47,21 @@ export function logSuccess(message: string): void {
 	process.stderr.write(`  ${green(symbols.check)} ${message}\n`);
 }
 
-/** Warning line. */
+/** Warning line — always shown (never suppressed by quiet or JSON mode). */
 export function logWarn(message: string): void {
-	if (_jsonMode) return;
+	if (_jsonMode) {
+		process.stderr.write(`warning: ${message}\n`);
+		return;
+	}
 	process.stderr.write(`  ${yellow(symbols.warn)} ${message}\n`);
 }
 
-/** Error line — always shown (never suppressed by quiet mode). */
+/** Error line — always shown (never suppressed by quiet or JSON mode). */
 export function logError(message: string, hint?: string): void {
-	if (_jsonMode) return;
+	if (_jsonMode) {
+		process.stderr.write(`error: ${message}${hint ? ` (${hint})` : ""}\n`);
+		return;
+	}
 	process.stderr.write(`  ${red(symbols.cross)} ${message}\n`);
 	if (hint) {
 		process.stderr.write(`    ${dim(hint)}\n`);

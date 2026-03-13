@@ -12,18 +12,18 @@
  */
 
 import {
-	bold, coral, cyan, dim, yellow, gray,
+	bold, coral, cyan, dim, yellow,
 	isTTY, symbols, termWidth,
 } from "./ui/theme.js";
 
-function buildHelp(): string {
-	const w = Math.min(termWidth(), 60);
+export function buildHelp(): string {
+	const w = Math.max(Math.min(termWidth(), 60), 24);
 	const lines: string[] = [];
 
 	if (isTTY) {
 		const title = " swarm ";
 		const sub = " cli ";
-		const padLen = w - title.length - sub.length - 4;
+		const padLen = Math.max(0, w - title.length - sub.length - 4);
 		const l = symbols.horizontal.repeat(Math.floor(padLen / 2));
 		const r = symbols.horizontal.repeat(Math.ceil(padLen / 2));
 		lines.push("");
@@ -84,7 +84,12 @@ function buildHelp(): string {
 	return lines.join("\n");
 }
 
-const HELP = buildHelp();
+// Lazy — evaluated on first use, not at module load
+let _help: string | undefined;
+function getHelp(): string {
+	if (!_help) _help = buildHelp();
+	return _help;
+}
 
 async function main() {
 	const args = process.argv.slice(2);
@@ -163,7 +168,7 @@ async function main() {
 		case "help":
 		case "--help":
 		case "-h": {
-			console.log(HELP);
+			console.log(getHelp());
 			break;
 		}
 

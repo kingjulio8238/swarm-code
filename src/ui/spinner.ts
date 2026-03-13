@@ -23,8 +23,10 @@ const SPINNER_CHARS = isTTY
 	: ["*"];
 
 export class Spinner {
+	private static _exitHandlerRegistered = false;
 	private intervalId: ReturnType<typeof setInterval> | null = null;
 	private frameIdx = 0;
+	private totalFrames = 0;
 	private verbIdx = Math.floor(Math.random() * VERBS.length);
 	private detail = "";
 	private startTime = 0;
@@ -37,19 +39,29 @@ export class Spinner {
 		this.detail = detail || "";
 		this.startTime = Date.now();
 		this.frameIdx = 0;
+		this.totalFrames = 0;
 		this.verbIdx = Math.floor(Math.random() * VERBS.length);
 
-		// Hide cursor
+		// Hide cursor + register exit handler to restore it
 		process.stderr.write("\x1b[?25l");
+		if (!Spinner._exitHandlerRegistered) {
+			Spinner._exitHandlerRegistered = true;
+			process.on("exit", () => {
+				process.stderr.write("\x1b[?25h");
+			});
+		}
 
-		this.intervalId = setInterval(() => {
+		const id = setInterval(() => {
 			this.render();
 			this.frameIdx = (this.frameIdx + 1) % SPINNER_CHARS.length;
+			this.totalFrames++;
 			// Rotate verb every ~2 seconds (25 frames at 80ms)
-			if (this.frameIdx === 0) {
+			if (this.totalFrames % 25 === 0) {
 				this.verbIdx = (this.verbIdx + 1) % VERBS.length;
 			}
 		}, 80);
+		id.unref();
+		this.intervalId = id;
 	}
 
 	/** Update the detail text without restarting. */

@@ -47,6 +47,7 @@ import {
 	logInfo, logSuccess, logWarn, logError, logVerbose,
 	logDim, logRouter, logAnswer, logJson,
 } from "./ui/log.js";
+import { runOnboarding } from "./ui/onboarding.js";
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
 
@@ -77,7 +78,20 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
-		if (arg === "--dir" && i + 1 < args.length) {
+		if (arg === "--help" || arg === "-h") {
+			process.stderr.write(`\nUsage: swarm --dir <path> [options] "your task"\n\n`);
+			process.stderr.write(`Options:\n`);
+			process.stderr.write(`  --dir <path>           Target repository directory\n`);
+			process.stderr.write(`  --orchestrator <model> Orchestrator LLM model\n`);
+			process.stderr.write(`  --agent <backend>      Agent backend (opencode, claude, codex, aider)\n`);
+			process.stderr.write(`  --dry-run              Plan only, don't spawn threads\n`);
+			process.stderr.write(`  --max-budget <usd>     Maximum session budget\n`);
+			process.stderr.write(`  --auto-route           Enable automatic model selection\n`);
+			process.stderr.write(`  --verbose              Detailed progress output\n`);
+			process.stderr.write(`  --quiet / -q           Suppress non-essential output\n`);
+			process.stderr.write(`  --json                 Machine-readable JSON output\n\n`);
+			process.exit(0);
+		} else if (arg === "--dir" && i + 1 < args.length) {
 			dir = args[++i];
 		} else if (arg === "--orchestrator" && i + 1 < args.length) {
 			orchestratorModel = args[++i];
@@ -86,8 +100,13 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 		} else if (arg === "--dry-run") {
 			dryRun = true;
 		} else if (arg === "--max-budget" && i + 1 < args.length) {
-			const parsed = parseFloat(args[++i]);
-			maxBudget = isFinite(parsed) && parsed > 0 ? parsed : null;
+			const rawBudget = args[++i];
+			const parsed = parseFloat(rawBudget);
+			if (isFinite(parsed) && parsed > 0) {
+				maxBudget = parsed;
+			} else {
+				logWarn(`Invalid --max-budget value "${rawBudget}", ignoring`);
+			}
 		} else if (arg === "--verbose") {
 			verbose = true;
 		} else if (arg === "--quiet" || arg === "-q") {
@@ -284,16 +303,19 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	if (args.quiet) setLogLevel("quiet");
 	else if (args.verbose) setLogLevel("verbose");
 
-	// Override config with CLI args
-	if (args.agent) config.default_agent = args.agent;
-	if (args.maxBudget !== null) config.max_session_budget_usd = args.maxBudget;
-	if (args.autoRoute) config.auto_model_selection = true;
-
-	// Verify target directory
+	// Verify target directory before anything else
 	if (!fs.existsSync(args.dir)) {
 		logError(`Directory "${args.dir}" does not exist`);
 		process.exit(1);
 	}
+
+	// First-run onboarding (after dir validation so we don't waste user's time)
+	await runOnboarding();
+
+	// Override config with CLI args
+	if (args.agent) config.default_agent = args.agent;
+	if (args.maxBudget !== null) config.max_session_budget_usd = args.maxBudget;
+	if (args.autoRoute) config.auto_model_selection = true;
 
 	// Resolve orchestrator model
 	const resolved = resolveModel(args.orchestratorModel);
@@ -470,11 +492,10 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 
 		// Merge handler
 		const mergeHandler = async () => {
-			spinner.start("merging thread branches");
+			spinner.update("merging thread branches");
 			const threads = threadManager.getThreads();
 			const mergeOpts: MergeAllOptions = { continueOnConflict: true };
 			const results = await mergeAllThreads(args.dir, threads, mergeOpts);
-			spinner.stop();
 
 			const merged = results.filter(r => r.success).length;
 			const failed = results.filter(r => !r.success).length;
