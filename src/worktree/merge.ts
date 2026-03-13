@@ -22,6 +22,17 @@ function git(args: string[], cwd: string): Promise<{ stdout: string; stderr: str
 	});
 }
 
+/** Abort a merge safely, falling back to hard reset if --abort fails. */
+async function abortMergeSafe(repoRoot: string): Promise<void> {
+	try {
+		await git(["merge", "--abort"], repoRoot);
+	} catch {
+		try {
+			await git(["reset", "--hard", "HEAD"], repoRoot);
+		} catch { /* last resort failed — repo may be in bad state */ }
+	}
+}
+
 /**
  * Merge a single thread branch into the current branch.
  * On conflict, captures the conflicted file list and diff hunks before aborting.
@@ -67,7 +78,7 @@ export async function mergeThreadBranch(
 				}
 
 				// Abort the merge to restore clean state
-				await git(["merge", "--abort"], repoRoot);
+				await abortMergeSafe(repoRoot);
 
 				return {
 					success: false,
@@ -77,7 +88,7 @@ export async function mergeThreadBranch(
 					message: `Merge conflicts in: ${conflicts.join(", ")}`,
 				};
 			} catch {
-				try { await git(["merge", "--abort"], repoRoot); } catch { /* already clean */ }
+				await abortMergeSafe(repoRoot);
 				return {
 					success: false,
 					branch: branchName,

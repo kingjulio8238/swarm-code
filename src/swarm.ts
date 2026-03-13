@@ -25,8 +25,9 @@ const { loadConfig } = await import("./config.js");
 await import("./agents/opencode.js");
 await import("./agents/direct-llm.js");
 
+import { randomBytes } from "node:crypto";
 import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
-import { mergeAllThreads } from "./worktree/merge.js";
+import { mergeAllThreads, type MergeAllOptions } from "./worktree/merge.js";
 import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
 import type { ThreadProgressPhase } from "./core/types.js";
 import type { Api, Model } from "@mariozechner/pi-ai";
@@ -63,7 +64,8 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 		} else if (arg === "--dry-run") {
 			dryRun = true;
 		} else if (arg === "--max-budget" && i + 1 < args.length) {
-			maxBudget = parseFloat(args[++i]);
+			const parsed = parseFloat(args[++i]);
+			maxBudget = isFinite(parsed) && parsed > 0 ? parsed : null;
 		} else if (arg === "--verbose") {
 			verbose = true;
 		} else if (!arg.startsWith("--")) {
@@ -334,7 +336,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			model: string,
 			files: string[],
 		) => {
-			const threadId = Math.random().toString(36).slice(2, 14);
+			const threadId = randomBytes(6).toString("hex");
 			const result = await threadManager.spawnThread({
 				id: threadId,
 				task,
@@ -357,7 +359,8 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 		// Merge handler — wires Python merge_threads() to worktree merge
 		const mergeHandler = async () => {
 			const threads = threadManager.getThreads();
-			const results = await mergeAllThreads(args.dir, threads);
+			const mergeOpts: MergeAllOptions = { continueOnConflict: true };
+			const results = await mergeAllThreads(args.dir, threads, mergeOpts);
 
 			const summary = results.map((r) =>
 				r.success

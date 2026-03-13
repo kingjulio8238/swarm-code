@@ -120,33 +120,11 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
 	"gemini-2.5-flash": { input: 0.15, output: 0.6 },
 };
 
-// ── Config types ────────────────────────────────────────────────────────────
+// ── Config types (canonical definition in ../config.ts) ─────────────────────
 
-export interface SwarmConfig {
-	// Inherited from RLM
-	max_iterations: number;
-	max_depth: number;
-	max_sub_queries: number;
-	truncate_len: number;
-	metadata_preview_lines: number;
-
-	// Swarm extensions
-	max_threads: number;
-	max_total_threads: number;
-	thread_timeout_ms: number;
-	max_thread_budget_usd: number;
-	max_session_budget_usd: number;
-	default_agent: string;
-	default_model: string;
-	auto_model_selection: boolean;
-	compression_strategy: "structured" | "llm-summary" | "diff-only" | "truncate";
-	compression_max_tokens: number;
-	worktree_base_dir: string;
-	auto_cleanup_worktrees: boolean;
-	episodic_memory_enabled: boolean;
-	memory_dir: string;
-	thread_retries: number;
-}
+// Re-export from config.ts to avoid circular imports — consumers can import
+// SwarmConfig from either location.
+export type { SwarmConfig } from "../config.js";
 
 // ── Protocol messages (Python <-> TS) ───────────────────────────────────────
 

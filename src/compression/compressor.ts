@@ -23,20 +23,20 @@ export interface CompressionInput {
 export function compressResult(
 	input: CompressionInput,
 	strategy: SwarmConfig["compression_strategy"] = "structured",
-	maxTokens: number = 1000,
+	maxChars: number = 1000,
 ): string {
 	switch (strategy) {
 		case "structured":
-			return compressStructured(input, maxTokens);
+			return compressStructured(input, maxChars);
 		case "diff-only":
-			return compressDiffOnly(input, maxTokens);
+			return compressDiffOnly(input, maxChars);
 		case "truncate":
-			return compressTruncate(input, maxTokens);
+			return compressTruncate(input, maxChars);
 		case "llm-summary":
 			// Falls back to structured until Phase 3
-			return compressStructured(input, maxTokens);
+			return compressStructured(input, maxChars);
 		default:
-			return compressStructured(input, maxTokens);
+			return compressStructured(input, maxChars);
 	}
 }
 

@@ -51,6 +51,7 @@ class AsyncSemaphore {
 	}
 
 	release(): void {
+		if (this.current <= 0) return; // Guard against double-release
 		this.current--;
 		const next = this.waiters.shift();
 		if (next) next();

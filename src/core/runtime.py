@@ -124,7 +124,10 @@ def llm_query(sub_context: str, instruction: str = "") -> str:
 
     event.wait()
     _pending_results.pop(request_id, None)
-    return _result_store.pop(request_id, "")
+    result = _result_store.pop(request_id, None)
+    if result is None:
+        raise RuntimeError("Host process disconnected during llm_query — stdin closed")
+    return result
 
 
 async def async_llm_query(sub_context: str, instruction: str = "") -> str:
@@ -168,7 +171,9 @@ def thread(task: str, context: str = "", agent: str = "opencode", model: str = "
     event.wait()
     _pending_results.pop(request_id, None)
 
-    raw = _result_store.pop(request_id, "{}")
+    raw = _result_store.pop(request_id, None)
+    if raw is None:
+        raise RuntimeError("Host process disconnected during thread() — stdin closed")
     try:
         result_msg = json.loads(raw)
         return result_msg.get("result", raw)
@@ -214,7 +219,9 @@ def merge_threads() -> str:
     event.wait()
     _pending_results.pop(request_id, None)
 
-    raw = _result_store.pop(request_id, "{}")
+    raw = _result_store.pop(request_id, None)
+    if raw is None:
+        raise RuntimeError("Host process disconnected during merge_threads() — stdin closed")
     try:
         result_msg = json.loads(raw)
         return result_msg.get("result", raw)
@@ -222,9 +229,9 @@ def merge_threads() -> str:
         return raw
 
 
-def _refresh_user_ns() -> None:
-    """Ensure the user namespace has the latest runtime symbols."""
-    _user_ns.update({
+def _runtime_symbols() -> dict:
+    """Return the dict of runtime symbols injected into the user namespace."""
+    return {
         '__builtins__': __builtins__,
         'context': context,
         'llm_query': llm_query,
@@ -234,7 +241,12 @@ def _refresh_user_ns() -> None:
         'merge_threads': merge_threads,
         'FINAL': FINAL,
         'FINAL_VAR': FINAL_VAR,
-    })
+    }
+
+
+def _refresh_user_ns() -> None:
+    """Ensure the user namespace has the latest runtime symbols."""
+    _user_ns.update(_runtime_symbols())
 
 
 def _execute_code(code: str) -> None:
@@ -254,7 +266,7 @@ def _execute_code(code: str) -> None:
             exec(compiled, _user_ns)
         except SyntaxError as e:
             if "await" in str(code):
-                _protected = {'context', 'llm_query', 'async_llm_query', 'thread', 'async_thread', 'merge_threads', 'FINAL', 'FINAL_VAR', '__builtins__'}
+                _protected = set(_runtime_symbols().keys())
                 async_code = "async def __async_exec__():\n"
                 for line in code.split("\n"):
                     async_code += f"    {line}\n"

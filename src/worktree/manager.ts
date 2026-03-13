@@ -250,10 +250,14 @@ export class WorktreeManager {
 		return this.worktrees.get(threadId);
 	}
 
-	/** Cleanup all worktrees. */
+	/** Cleanup all worktrees. Resilient — continues past individual failures. */
 	async destroyAll(): Promise<void> {
 		for (const [id] of this.worktrees) {
-			await this.destroy(id, true);
+			try {
+				await this.destroy(id, true);
+			} catch {
+				// Continue cleaning up remaining worktrees
+			}
 		}
 
 		// Remove base directory if empty
