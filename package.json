@@ -21,6 +21,8 @@
     "swarm": "tsx src/main.ts",
     "bench:oolong": "tsx benchmarks/oolong_synth.ts",
     "bench:longbench": "tsx benchmarks/longbench_narrativeqa.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -48,7 +50,8 @@
   "devDependencies": {
     "esbuild": "^0.27.3",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
   },
   "engines": {
     "node": ">=20"
