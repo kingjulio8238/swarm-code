@@ -6,6 +6,10 @@
  * rule-based router for when auto_model_selection is enabled, ensuring
  * cost-efficient defaults even when the orchestrator doesn't explicitly choose.
  *
+ * Two routing dimensions:
+ *   1. Task complexity (simple/medium/complex) → picks model tier
+ *   2. Task slot (execution/search/reasoning/planning) → picks agent + model specialty
+ *
  * Two routing modes:
  *   1. Orchestrator-driven (default): The orchestrator prompt teaches the LLM
  *      about agent strengths, and the LLM passes agent/model in thread() calls.
@@ -14,6 +18,7 @@
  */
 
 import type { SwarmConfig } from "../core/types.js";
+import type { ModelSlots } from "../config.js";
 import { getAvailableAgents } from "../agents/provider.js";
 
 // ── Agent capabilities ─────────────────────────────────────────────────────
@@ -113,11 +118,67 @@ export function classifyTaskComplexity(task: string): TaskComplexity {
 	return "medium";
 }
 
+// ── Named model slots ─────────────────────────────────────────────────────
+
+/**
+ * Task slots — named categories that map to specialized model/agent combos.
+ * Inspired by Slate's model slots (main, subagent, search, reasoning).
+ */
+export type TaskSlot = "execution" | "search" | "reasoning" | "planning";
+
+export const DEFAULT_MODEL_SLOTS: ModelSlots = {
+	execution: "",  // empty = use agent's default based on complexity
+	search: "",
+	reasoning: "",
+	planning: "",
+};
+
+/** Preferred agent per slot when auto-routing. */
+const SLOT_AGENT_PREFERENCES: Record<TaskSlot, string[]> = {
+	execution: ["opencode", "codex", "claude-code", "aider"],
+	search: ["direct-llm", "opencode", "codex"],
+	reasoning: ["claude-code", "direct-llm", "opencode"],
+	planning: ["direct-llm", "claude-code"],
+};
+
+/** Classify a task into a named slot based on keyword analysis. */
+export function classifyTaskSlot(task: string): TaskSlot {
+	const lower = task.toLowerCase();
+
+	// Search patterns — retrieving information, finding things
+	const searchPatterns = [
+		"search", "find", "look up", "locate", "grep",
+		"what is", "where is", "which file", "list all",
+		"documentation", "docs", "research", "investigate",
+	];
+	if (searchPatterns.some(p => lower.includes(p))) return "search";
+
+	// Reasoning patterns — analysis, review, understanding
+	const reasoningPatterns = [
+		"analyze", "analysis", "review", "explain", "understand",
+		"why does", "how does", "debug", "diagnose", "trace",
+		"reason", "evaluate", "assess", "compare",
+	];
+	if (reasoningPatterns.some(p => lower.includes(p))) return "reasoning";
+
+	// Planning patterns — design, architecture, strategy
+	const planningPatterns = [
+		"plan", "design", "architect", "propose", "strategy",
+		"roadmap", "outline", "spec", "specification", "rfc",
+		"how should", "what approach", "break down",
+	];
+	if (planningPatterns.some(p => lower.includes(p))) return "planning";
+
+	// Default: execution (coding, fixing, building)
+	return "execution";
+}
+
 // ── Router ─────────────────────────────────────────────────────────────────
 
 export interface RouteResult {
 	agent: string;
 	model: string;
+	slot: TaskSlot;
 	reason: string;
 }
 
@@ -126,26 +187,36 @@ export interface RouteResult {
  *
  * Logic:
  *   1. Classify task complexity (simple/medium/complex)
- *   2. Filter to available agents
- *   3. Match agent strengths to task keywords
- *   4. Pick the cheapest capable option
+ *   2. Classify task slot (execution/search/reasoning/planning)
+ *   3. Check for slot-specific model overrides in config
+ *   4. Score agents with slot preference bonus
+ *   5. Pick the cheapest capable option
  */
 export async function routeTask(
 	task: string,
 	config: SwarmConfig,
 ): Promise<RouteResult> {
 	const complexity = classifyTaskComplexity(task);
+	const slot = classifyTaskSlot(task);
 	const available = await getAvailableAgents();
 	const lower = task.toLowerCase();
+
+	// Check for slot-specific model override from config
+	const slotOverrides = config.model_slots || DEFAULT_MODEL_SLOTS;
+	const slotModel = slotOverrides[slot];
 
 	// If no agents available, fall back to direct-llm
 	if (available.length === 0) {
 		return {
 			agent: "direct-llm",
-			model: config.default_model,
+			model: slotModel || config.default_model,
+			slot,
 			reason: "no agent backends available, falling back to direct LLM",
 		};
 	}
+
+	// Get preferred agents for this slot
+	const slotPrefs = SLOT_AGENT_PREFERENCES[slot];
 
 	// Score each available agent for this task
 	const scored = available
@@ -163,6 +234,12 @@ export async function routeTask(
 				}
 			}
 
+			// Slot preference bonus — agents preferred for this slot get a boost
+			const slotRank = slotPrefs.indexOf(name);
+			if (slotRank !== -1) {
+				score += (slotPrefs.length - slotRank) * 2;
+			}
+
 			// Complexity-cost alignment
 			if (complexity === "simple") {
 				// Prefer cheap + fast agents
@@ -175,12 +252,16 @@ export async function routeTask(
 				score += cap.costTier; // Higher cost often = more capable
 			}
 
-			// Select model based on complexity
+			// Select model: slot override > complexity-based default
 			let model: string;
-			switch (complexity) {
-				case "simple": model = cap.cheapModel; break;
-				case "complex": model = cap.premiumModel; break;
-				default: model = cap.defaultModel; break;
+			if (slotModel) {
+				model = slotModel;
+			} else {
+				switch (complexity) {
+					case "simple": model = cap.cheapModel; break;
+					case "complex": model = cap.premiumModel; break;
+					default: model = cap.defaultModel; break;
+				}
 			}
 
 			return { name, score, model };
@@ -189,24 +270,11 @@ export async function routeTask(
 
 	const best = scored[0];
 
-	// Special overrides for specific task patterns
-	if (lower.includes("analysis") || lower.includes("analyze") || lower.includes("review") || lower.includes("explain")) {
-		// Pure analysis doesn't need a coding agent
-		if (available.includes("direct-llm")) {
-			return {
-				agent: "direct-llm",
-				model: complexity === "complex"
-					? AGENT_CAPABILITIES["direct-llm"].premiumModel
-					: AGENT_CAPABILITIES["direct-llm"].defaultModel,
-				reason: `analysis task → direct-llm (${complexity})`,
-			};
-		}
-	}
-
 	return {
 		agent: best.name,
 		model: best.model,
-		reason: `${complexity} task → ${best.name} (score: ${best.score})`,
+		slot,
+		reason: `${slot}/${complexity} → ${best.name} (score: ${best.score})`,
 	};
 }
 
@@ -232,5 +300,14 @@ export async function describeAvailableAgents(): Promise<string> {
 			`\n  Default model: \`${cap.defaultModel}\` | Cheap: \`${cap.cheapModel}\` | Premium: \`${cap.premiumModel}\``
 		);
 	}
+
+	// Add slot routing info
+	lines.push("");
+	lines.push("**Model slots** (auto-routing selects the best agent per task type):");
+	lines.push("- `execution` — coding, fixing, building → prefers opencode, codex");
+	lines.push("- `search` — finding files, researching docs → prefers direct-llm");
+	lines.push("- `reasoning` — analysis, debugging, review → prefers claude-code, direct-llm");
+	lines.push("- `planning` — design, architecture, strategy → prefers direct-llm, claude-code");
+
 	return lines.join("\n");
 }

@@ -6,6 +6,10 @@
  *   - diff-only: just the git diff
  *   - truncate: raw truncation
  *   - llm-summary: use a cheap LLM to summarize thread work
+ *
+ * Episode quality: All strategies apply filterToSuccessfulOutput() first,
+ * stripping failed attempts, retries, and error noise so the orchestrator
+ * only sees what contributed to the final result (Slate-style episodes).
  */
 
 import type { SwarmConfig } from "../core/types.js";
@@ -31,22 +35,143 @@ export function setSummarizer(fn: LlmSummarizer): void {
 	_summarizer = fn;
 }
 
+// ── Episode quality filter ────────────────────────────────────────────────
+
+/**
+ * Patterns that indicate failed attempts, retries, or noise in agent output.
+ * These lines are stripped so the orchestrator only sees successful conclusions.
+ */
+const FAILURE_NOISE_PATTERNS = [
+	// Error/retry indicators
+	/^error[:\s]/i,
+	/^Error:/,
+	/failed to/i,
+	/retrying/i,
+	/retry attempt/i,
+	/^warning[:\s]/i,
+	/timed? ?out/i,
+	// Common agent noise: stack traces
+	/^\s+at\s+\S+\s+\(/,
+	/^Traceback \(most recent/,
+	/^\s+File ".*", line \d+/,
+	// Agent internal chatter
+	/^Thinking\.\.\./i,
+	/^Searching\.\.\./i,
+	/^Reading\.\.\./i,
+	/^Running command\.\.\./i,
+	// Reverted / undone actions
+	/reverted/i,
+	/undoing/i,
+	/rolling back/i,
+];
+
+/** Patterns that indicate successful, conclusive output worth keeping. */
+const SUCCESS_SIGNAL_PATTERNS = [
+	/^Applied edit to/i,
+	/^Wrote /,
+	/^Created /i,
+	/^Updated /i,
+	/^Added /i,
+	/^Removed /i,
+	/^Fixed /i,
+	/^Committing /,
+	/tests? pass/i,
+	/✓|✔|PASS/,
+	/^DONE/i,
+	/^SUCCESS/i,
+	/^Result:/i,
+	/^Summary:/i,
+	/^Completed/i,
+];
+
+/**
+ * Filter agent output to only include lines that contributed to the final result.
+ * Strips failed attempts, retries, stack traces, and noise.
+ * Keeps: success signals, file-change confirmations, final conclusions, and
+ * any line that doesn't match a known noise pattern.
+ *
+ * Strategy: remove known-bad lines rather than keep only known-good,
+ * so novel agent output is preserved by default.
+ */
+function filterToSuccessfulOutput(agentOutput: string): string {
+	if (!agentOutput) return agentOutput;
+
+	const lines = agentOutput.split("\n");
+	const filtered: string[] = [];
+	let inStackTrace = false;
+
+	for (const line of lines) {
+		const trimmed = line.trimStart();
+
+		// Detect start of stack trace blocks
+		if (/^Traceback \(most recent/.test(trimmed) || /^\s+at\s+\S+\s+\(/.test(trimmed)) {
+			inStackTrace = true;
+			continue;
+		}
+
+		// End stack trace on blank line or non-indented line
+		if (inStackTrace) {
+			if (trimmed === "" || (!trimmed.startsWith(" ") && !trimmed.startsWith("\t"))) {
+				inStackTrace = false;
+				// Still check if this line itself is noise
+			} else {
+				continue; // Skip stack trace continuation
+			}
+		}
+
+		// Always keep lines with success signals
+		if (SUCCESS_SIGNAL_PATTERNS.some(p => p.test(trimmed))) {
+			filtered.push(line);
+			continue;
+		}
+
+		// Skip lines matching failure/noise patterns
+		if (FAILURE_NOISE_PATTERNS.some(p => p.test(trimmed))) {
+			continue;
+		}
+
+		// Keep everything else (default: preserve novel output)
+		filtered.push(line);
+	}
+
+	// Collapse runs of blank lines to max 2
+	const collapsed: string[] = [];
+	let blankRun = 0;
+	for (const line of filtered) {
+		if (line.trim() === "") {
+			blankRun++;
+			if (blankRun <= 2) collapsed.push(line);
+		} else {
+			blankRun = 0;
+			collapsed.push(line);
+		}
+	}
+
+	return collapsed.join("\n").trim();
+}
+
 export async function compressResult(
 	input: CompressionInput,
 	strategy: SwarmConfig["compression_strategy"] = "structured",
 	maxChars: number = 1000,
 ): Promise<string> {
+	// Episode quality: filter agent output to successful conclusions only
+	const filtered: CompressionInput = {
+		...input,
+		agentOutput: filterToSuccessfulOutput(input.agentOutput),
+	};
+
 	switch (strategy) {
 		case "structured":
-			return compressStructured(input, maxChars);
+			return compressStructured(filtered, maxChars);
 		case "diff-only":
-			return compressDiffOnly(input, maxChars);
+			return compressDiffOnly(filtered, maxChars);
 		case "truncate":
-			return compressTruncate(input, maxChars);
+			return compressTruncate(filtered, maxChars);
 		case "llm-summary":
-			return compressLlmSummary(input, maxChars);
+			return compressLlmSummary(filtered, maxChars);
 		default:
-			return compressStructured(input, maxChars);
+			return compressStructured(filtered, maxChars);
 	}
 }
 

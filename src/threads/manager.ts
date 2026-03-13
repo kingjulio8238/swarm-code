@@ -23,6 +23,7 @@ import { MODEL_PRICING as PRICING } from "../core/types.js";
 import { getAgent } from "../agents/provider.js";
 import { WorktreeManager } from "../worktree/manager.js";
 import { compressResult } from "../compression/compressor.js";
+import { ThreadCache, type ThreadCacheStats } from "./cache.js";
 
 // ── Async Semaphore ─────────────────────────────────────────────────────────
 
@@ -144,6 +145,7 @@ export class ThreadManager {
 	private worktreeManager: WorktreeManager;
 	private config: SwarmConfig;
 	private budget: BudgetTracker;
+	private threadCache: ThreadCache;
 	private onThreadProgress?: ThreadProgressCallback;
 	private sessionAbort?: AbortSignal;
 	private threadAbortControllers: Map<string, AbortController> = new Map();
@@ -158,6 +160,7 @@ export class ThreadManager {
 		this.semaphore = new AsyncSemaphore(config.max_threads);
 		this.worktreeManager = new WorktreeManager(repoRoot, config.worktree_base_dir);
 		this.budget = new BudgetTracker(config.max_session_budget_usd, config.max_thread_budget_usd);
+		this.threadCache = new ThreadCache();
 		this.onThreadProgress = onThreadProgress;
 		this.sessionAbort = sessionAbort;
 	}
@@ -168,10 +171,22 @@ export class ThreadManager {
 
 	/**
 	 * Spawn a thread — creates a worktree, runs the agent, returns compressed result.
+	 * Checks the subthread cache first; on cache hit, returns immediately (Slate-style reuse).
 	 * Retries up to config.thread_retries times on failure.
 	 * Error-isolated: a failure here never throws — always returns a CompressedResult.
 	 */
 	async spawnThread(threadConfig: ThreadConfig): Promise<CompressedResult> {
+		// Subthread cache lookup — return cached result for identical tasks
+		const cacheAgent = threadConfig.agent.backend || this.config.default_agent;
+		const cacheModel = threadConfig.agent.model || this.config.default_model;
+		const cacheFiles = threadConfig.files || [];
+		const cached = this.threadCache.get(threadConfig.task, cacheFiles, cacheAgent, cacheModel);
+		if (cached) {
+			const threadId = threadConfig.id || randomBytes(6).toString("hex");
+			this.onThreadProgress?.(threadId, "completed", "cache hit");
+			return cached;
+		}
+
 		// Enforce total thread limit
 		if (this.totalSpawned >= this.config.max_total_threads) {
 			return {
@@ -379,6 +394,18 @@ export class ThreadManager {
 			this.onThreadProgress?.(threadId, "completed",
 				`${filesChanged.length} files, ~$${estimatedCost.toFixed(4)}`);
 
+			// Cache successful results for subthread reuse
+			if (result.success) {
+				const cfg = state.config;
+				this.threadCache.set(
+					cfg.task,
+					cfg.files || [],
+					cfg.agent.backend || this.config.default_agent,
+					cfg.agent.model || this.config.default_model,
+					result,
+				);
+			}
+
 			return result;
 		} catch (err) {
 			const errorMsg = err instanceof Error ? err.message : String(err);
@@ -440,6 +467,11 @@ export class ThreadManager {
 	/** Get current budget state. */
 	getBudgetState(): BudgetState {
 		return this.budget.getState();
+	}
+
+	/** Get subthread cache stats. */
+	getCacheStats(): ThreadCacheStats {
+		return this.threadCache.getStats();
 	}
 
 	/** Get concurrency stats. */

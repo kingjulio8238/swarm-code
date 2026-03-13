@@ -40,12 +40,17 @@ ${agentDescriptions ? `## Available Agents
 
 ${agentDescriptions}
 
-**Agent selection guidelines:**
-- **Simple edits** (rename, lint, add comments): Use \`aider\` with a cheap model — it's fastest and cheapest
-- **Standard coding tasks** (bug fixes, new features, tests): Use \`opencode\` or \`claude-code\` with a default model
-- **Complex refactoring** (architecture changes, migrations): Use \`claude-code\` with a premium model
-- **Analysis-only tasks** (code review, planning): Use \`direct-llm\` — no agent overhead
-- **OpenAI-specific models**: Use \`codex\` for best compatibility with o3, gpt-4o, etc.
+**Agent selection by task slot:**
+- **Execution** (coding, fixing, building): Use \`opencode\` or \`codex\` — fast, tool-capable
+- **Search** (finding files, researching docs): Use \`direct-llm\` — lightweight, no agent overhead
+- **Reasoning** (analysis, debugging, review): Use \`claude-code\` or \`direct-llm\` — deep analysis
+- **Planning** (design, architecture, strategy): Use \`direct-llm\` or \`claude-code\` — structured thinking
+
+**Model tier by complexity:**
+- **Simple** (rename, lint, format): Use cheap models (haiku, gpt-4o-mini)
+- **Standard** (bug fixes, features, tests): Use default models (sonnet, o3-mini)
+- **Complex** (refactoring, migrations): Use premium models (opus, o3)
+- **OpenAI-specific**: Use \`codex\` for best o3/gpt-4o compatibility
 - When in doubt, use \`${config.default_agent}\` with the default model
 
 ` : ""}## Strategy
@@ -58,6 +63,12 @@ ${agentDescriptions}
 6. **Merge**: Call \`merge_threads()\` to integrate changes
 7. **Verify**: Optionally spawn a test thread to verify the merged result
 8. **Report**: Call \`FINAL()\` with a summary
+
+## Episode Quality & Caching
+
+- **Thread results are episodes**: Each thread returns a compressed summary of only the successful operations and conclusions — failed attempts, stack traces, and retries are filtered out automatically.
+- **Subthread caching**: Identical threads (same task + files + agent + model) are cached. If you spawn the same thread twice, the second call returns instantly from cache. Design your tasks to be deterministic and reusable where possible.
+- **Cost optimization**: Prefer spawning many small, focused threads over few large ones. Small threads cache better and fail more gracefully.
 
 ## Rules
 

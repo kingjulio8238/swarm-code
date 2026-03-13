@@ -26,10 +26,11 @@ npm run build
 - `src/core/repl.ts` — Python REPL bridge (line-delimited JSON over stdin/stdout)
 - `src/core/runtime.py` — Python runtime with thread(), async_thread(), merge_threads()
 - `src/agents/` — Agent backends (opencode, claude-code, codex, aider, direct-llm)
-- `src/routing/model-router.ts` — Auto model/agent selection based on task complexity
-- `src/threads/manager.ts` — Thread lifecycle + concurrency
+- `src/routing/model-router.ts` — Auto model/agent selection based on task complexity + named slots
+- `src/threads/manager.ts` — Thread lifecycle + concurrency + subthread caching
+- `src/threads/cache.ts` — Subthread cache (SHA-256 keyed by task+files+agent+model)
 - `src/worktree/` — Git worktree CRUD + merge
-- `src/compression/` — Result compression strategies (structured, diff-only, truncate, llm-summary)
+- `src/compression/` — Result compression with episode quality filtering (success-only output)
 - `src/prompts/orchestrator.ts` — Swarm orchestrator system prompt with agent capabilities
 
 ## Key Design
@@ -53,3 +54,10 @@ JSON protocol between Python and TypeScript:
 - `default_agent`: agent backend (default: opencode). Options: opencode, claude-code, codex, aider, direct-llm
 - `auto_model_selection`: enable auto-routing (default: false). CLI: `--auto-route`
 - `compression_strategy`: structured | diff-only | truncate | llm-summary
+- `model_slot_execution/search/reasoning/planning`: per-slot model overrides (empty = auto-select)
+
+## Key Optimizations
+
+- **Episode quality**: Compression filters agent output to only successful operations — failed attempts, stack traces, retries stripped automatically
+- **Subthread caching**: Identical threads (same task+files+agent+model) cached in-memory; second call returns instantly
+- **Named model slots**: Tasks auto-classified into execution/search/reasoning/planning; each slot has preferred agents and optional model overrides

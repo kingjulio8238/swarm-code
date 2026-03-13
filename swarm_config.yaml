@@ -64,3 +64,12 @@ memory_dir: ~/.swarm/memory
 
 # Retry failed threads (0 = no retry, 1 = one retry, max 3)
 thread_retries: 1
+
+# ── Model slots ────────────────────────────────────────────────────────────
+# Override the model used for specific task types (empty = auto-select)
+# Format: provider/model-id (e.g., anthropic/claude-sonnet-4-6)
+
+# model_slot_execution:       # coding, fixing, building
+# model_slot_search:          # finding files, researching docs
+# model_slot_reasoning:       # analysis, debugging, review
+# model_slot_planning:        # design, architecture, strategy

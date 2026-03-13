@@ -379,7 +379,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 				resolvedAgent = route.agent;
 				resolvedModel = route.model;
 				if (args.verbose) {
-					console.error(`  [router] ${route.reason}`);
+					console.error(`  [router] ${route.reason} [slot: ${route.slot}]`);
 				}
 			}
 
@@ -458,6 +458,15 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			if (cancelled > 0) threadSummary += `, ${cancelled} cancelled`;
 			threadSummary += ` | Est. cost: $${budget.totalSpentUsd.toFixed(4)}`;
 			console.error(threadSummary);
+
+			// Report cache stats if any cache activity occurred
+			const cacheStats = threadManager.getCacheStats();
+			if (cacheStats.hits > 0 || cacheStats.size > 0) {
+				console.error(
+					`Cache: ${cacheStats.hits} hits, ${cacheStats.misses} misses` +
+					` | Saved: ${(cacheStats.totalSavedMs / 1000).toFixed(1)}s, $${cacheStats.totalSavedUsd.toFixed(4)}`,
+				);
+			}
 		}
 
 		console.error("---");

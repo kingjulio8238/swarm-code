@@ -10,6 +10,14 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 
+/** Named model slot overrides — lets users assign specific models per task type. */
+export interface ModelSlots {
+	execution: string;
+	search: string;
+	reasoning: string;
+	planning: string;
+}
+
 export interface SwarmConfig {
 	// Inherited from RLM
 	max_iterations: number;
@@ -34,6 +42,7 @@ export interface SwarmConfig {
 	episodic_memory_enabled: boolean;
 	memory_dir: string;
 	thread_retries: number;
+	model_slots: ModelSlots;
 }
 
 // Also export as RlmConfig for backwards compat with forked modules
@@ -63,6 +72,12 @@ const DEFAULTS: SwarmConfig = {
 	episodic_memory_enabled: false,
 	memory_dir: path.join(os.homedir(), ".swarm", "memory"),
 	thread_retries: 1,
+	model_slots: {
+		execution: "",   // empty = use agent's default based on complexity
+		search: "",
+		reasoning: "",
+		planning: "",
+	},
 };
 
 function parseYaml(text: string): Record<string, unknown> {
@@ -145,6 +160,12 @@ export function loadConfig(): SwarmConfig {
 					episodic_memory_enabled: bool(parsed.episodic_memory_enabled, DEFAULTS.episodic_memory_enabled),
 					memory_dir: str(parsed.memory_dir, DEFAULTS.memory_dir),
 					thread_retries: clamp(parsed.thread_retries, 0, 3, DEFAULTS.thread_retries),
+					model_slots: {
+						execution: str(parsed.model_slot_execution, DEFAULTS.model_slots.execution),
+						search: str(parsed.model_slot_search, DEFAULTS.model_slots.search),
+						reasoning: str(parsed.model_slot_reasoning, DEFAULTS.model_slots.reasoning),
+						planning: str(parsed.model_slot_planning, DEFAULTS.model_slots.planning),
+					},
 				};
 			} catch {
 				// Fall through to defaults

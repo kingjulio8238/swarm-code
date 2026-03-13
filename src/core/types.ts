@@ -124,7 +124,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
 
 // Re-export from config.ts to avoid circular imports — consumers can import
 // SwarmConfig from either location.
-export type { SwarmConfig } from "../config.js";
+export type { SwarmConfig, ModelSlots } from "../config.js";
 
 // ── Protocol messages (Python <-> TS) ───────────────────────────────────────
 
