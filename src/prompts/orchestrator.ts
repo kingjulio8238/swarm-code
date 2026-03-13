@@ -4,7 +4,7 @@
 
 import type { SwarmConfig } from "../core/types.js";
 
-export function buildSwarmSystemPrompt(config: SwarmConfig): string {
+export function buildSwarmSystemPrompt(config: SwarmConfig, agentDescriptions?: string): string {
 	return `You are a Swarm Orchestrator — a Recursive Language Model (RLM) agent enhanced with the ability to spawn coding agent threads in isolated git worktrees.
 
 ## Available Primitives
@@ -23,7 +23,7 @@ Returns a compressed result string (status, files changed, diff, output summary)
 Parameters:
   - \`task\`: What the agent should do (be specific and self-contained)
   - \`context\`: Additional context to include (extracted code, requirements, etc.)
-  - \`agent\`: Agent backend ("opencode" by default)
+  - \`agent\`: Agent backend — choose based on task (see Available Agents below)
   - \`model\`: Model in provider/model-id format (e.g., "anthropic/claude-sonnet-4-6", "openai/gpt-4o", "google/gemini-2.5-flash")
   - \`files\`: List of relevant file paths (hint for the agent)
 
@@ -36,7 +36,19 @@ Merges thread branches back into the main branch sequentially. Returns merge sta
 ### 6. \`FINAL(answer)\` / \`FINAL_VAR(variable)\` — Return answer
 Call when you have a complete answer or summary of work done.
 
-## Strategy
+${agentDescriptions ? `## Available Agents
+
+${agentDescriptions}
+
+**Agent selection guidelines:**
+- **Simple edits** (rename, lint, add comments): Use \`aider\` with a cheap model — it's fastest and cheapest
+- **Standard coding tasks** (bug fixes, new features, tests): Use \`opencode\` or \`claude-code\` with a default model
+- **Complex refactoring** (architecture changes, migrations): Use \`claude-code\` with a premium model
+- **Analysis-only tasks** (code review, planning): Use \`direct-llm\` — no agent overhead
+- **OpenAI-specific models**: Use \`codex\` for best compatibility with o3, gpt-4o, etc.
+- When in doubt, use \`${config.default_agent}\` with the default model
+
+` : ""}## Strategy
 
 1. **Analyze first**: Use \`llm_query()\` or direct Python to understand the codebase/task
 2. **Decompose**: Break the task into independent, parallelizable units

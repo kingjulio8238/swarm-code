@@ -24,11 +24,15 @@ const { loadConfig } = await import("./config.js");
 // Register agent backends
 await import("./agents/opencode.js");
 await import("./agents/direct-llm.js");
+await import("./agents/claude-code.js");
+await import("./agents/codex.js");
+await import("./agents/aider.js");
 
 import { randomBytes } from "node:crypto";
 import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
 import { mergeAllThreads, type MergeAllOptions } from "./worktree/merge.js";
 import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
+import { routeTask, describeAvailableAgents } from "./routing/model-router.js";
 import type { ThreadProgressPhase } from "./core/types.js";
 import type { Api, Model } from "@mariozechner/pi-ai";
 
@@ -41,6 +45,7 @@ interface SwarmArgs {
 	dryRun: boolean;
 	maxBudget: number | null;
 	verbose: boolean;
+	autoRoute: boolean;
 	query: string;
 }
 
@@ -51,6 +56,7 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 	let dryRun = false;
 	let maxBudget: number | null = null;
 	let verbose = false;
+	let autoRoute = false;
 	const positional: string[] = [];
 
 	for (let i = 0; i < args.length; i++) {
@@ -68,6 +74,8 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 			maxBudget = isFinite(parsed) && parsed > 0 ? parsed : null;
 		} else if (arg === "--verbose") {
 			verbose = true;
+		} else if (arg === "--auto-route") {
+			autoRoute = true;
 		} else if (!arg.startsWith("--")) {
 			positional.push(arg);
 		}
@@ -90,6 +98,7 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 		agent: agent || "",
 		dryRun,
 		maxBudget,
+		autoRoute,
 		verbose,
 		query: positional.join(" "),
 	};
@@ -256,6 +265,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	// Override config with CLI args
 	if (args.agent) config.default_agent = args.agent;
 	if (args.maxBudget !== null) config.max_session_budget_usd = args.maxBudget;
+	if (args.autoRoute) config.auto_model_selection = true;
 
 	// Verify target directory
 	if (!fs.existsSync(args.dir)) {
@@ -277,6 +287,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	console.error(`  Directory: ${args.dir}`);
 	console.error(`  Model:     ${resolved.model.id} (${resolved.provider})`);
 	console.error(`  Agent:     ${config.default_agent}`);
+	console.error(`  Routing:   ${config.auto_model_selection ? "auto" : "orchestrator-driven"}`);
 	console.error(`  Query:     ${args.query}`);
 	if (args.dryRun) console.error(`  Mode:      DRY RUN (no threads will be spawned)`);
 	console.error(`---`);
@@ -323,10 +334,33 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	try {
 		await repl.start(ac.signal);
 
-		// Build system prompt
-		const systemPrompt = args.dryRun
-			? buildSwarmSystemPrompt(config) + "\n\n## DRY RUN MODE\nDo NOT call thread() or async_thread(). Instead, describe what threads you WOULD spawn (task, files, model). Call FINAL() with your execution plan."
-			: buildSwarmSystemPrompt(config);
+		// Register LLM summarizer for llm-summary compression strategy
+		if (config.compression_strategy === "llm-summary") {
+			const { setSummarizer } = await import("./compression/compressor.js");
+			const { completeSimple } = await import("@mariozechner/pi-ai");
+			setSummarizer(async (text: string, instruction: string) => {
+				const response = await completeSimple(resolved.model, {
+					systemPrompt: instruction,
+					messages: [{
+						role: "user",
+						content: text,
+						timestamp: Date.now(),
+					}],
+				});
+				// Extract text content from AssistantMessage
+				return response.content
+					.filter((b): b is { type: "text"; text: string } => b.type === "text")
+					.map(b => b.text)
+					.join("");
+			});
+		}
+
+		// Build system prompt with agent capabilities
+		const agentDesc = await describeAvailableAgents();
+		let systemPrompt = buildSwarmSystemPrompt(config, agentDesc);
+		if (args.dryRun) {
+			systemPrompt += "\n\n## DRY RUN MODE\nDo NOT call thread() or async_thread(). Instead, describe what threads you WOULD spawn (task, files, model). Call FINAL() with your execution plan.";
+		}
 
 		// Thread handler — wires Python thread() calls to ThreadManager
 		const threadHandler = async (
@@ -336,14 +370,27 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			model: string,
 			files: string[],
 		) => {
+			let resolvedAgent = agentBackend || config.default_agent;
+			let resolvedModel = model || config.default_model;
+
+			// Auto-routing: override agent/model if enabled and not explicitly specified
+			if (config.auto_model_selection && !agentBackend && !model) {
+				const route = await routeTask(task, config);
+				resolvedAgent = route.agent;
+				resolvedModel = route.model;
+				if (args.verbose) {
+					console.error(`  [router] ${route.reason}`);
+				}
+			}
+
 			const threadId = randomBytes(6).toString("hex");
 			const result = await threadManager.spawnThread({
 				id: threadId,
 				task,
 				context: threadContext,
 				agent: {
-					backend: agentBackend || config.default_agent,
-					model: model || config.default_model,
+					backend: resolvedAgent,
+					model: resolvedModel,
 				},
 				files,
 			});

@@ -343,7 +343,7 @@ export class ThreadManager {
 			// Compress
 			state.phase = "compressing";
 			this.onThreadProgress?.(threadId, "compressing");
-			const compressed = compressResult(
+			const compressed = await compressResult(
 				{
 					agentOutput: agentResult.output,
 					diff,
