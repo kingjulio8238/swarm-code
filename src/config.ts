@@ -6,8 +6,8 @@
  */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Named model slot overrides — lets users assign specific models per task type. */
@@ -77,7 +77,7 @@ const DEFAULTS: SwarmConfig = {
 	memory_dir: path.join(os.homedir(), ".swarm", "memory"),
 	thread_retries: 1,
 	model_slots: {
-		execution: "",   // empty = use agent's default based on complexity
+		execution: "", // empty = use agent's default based on complexity
 		search: "",
 		reasoning: "",
 		planning: "",
@@ -100,8 +100,7 @@ function parseYaml(text: string): Record<string, unknown> {
 		const rawVal = trimmed.slice(colonIdx + 1).trim();
 		// Strip inline comments (but not inside quoted strings)
 		let val: string;
-		if ((rawVal.startsWith('"') && rawVal.includes('"', 1)) ||
-			(rawVal.startsWith("'") && rawVal.includes("'", 1))) {
+		if ((rawVal.startsWith('"') && rawVal.includes('"', 1)) || (rawVal.startsWith("'") && rawVal.includes("'", 1))) {
 			// Quoted value — don't strip inline comments
 			val = rawVal;
 		} else {
@@ -109,7 +108,7 @@ function parseYaml(text: string): Record<string, unknown> {
 		}
 		// Parse number
 		const num = Number(val);
-		if (!isNaN(num) && val !== "") {
+		if (!Number.isNaN(num) && val !== "") {
 			result[key] = num;
 		} else if (val === "true") {
 			result[key] = true;
@@ -148,19 +147,19 @@ export function loadConfig(cwd?: string): SwarmConfig {
 						const userRaw = fs.readFileSync(userConfigPath, "utf-8");
 						const userParsed = parseYaml(userRaw);
 						parsed = { ...parsed, ...userParsed };
-					} catch { /* ignore malformed user config */ }
+					} catch {
+						/* ignore malformed user config */
+					}
 				}
 				const clamp = (v: unknown, min: number, max: number, def: number) =>
-					typeof v === "number" && isFinite(v) ? Math.max(min, Math.min(max, Math.round(v))) : def;
-				const str = (v: unknown, def: string) =>
-					typeof v === "string" && v.length > 0 ? v : def;
-				const bool = (v: unknown, def: boolean) =>
-					typeof v === "boolean" ? v : def;
+					typeof v === "number" && Number.isFinite(v) ? Math.max(min, Math.min(max, Math.round(v))) : def;
+				const str = (v: unknown, def: string) => (typeof v === "string" && v.length > 0 ? v : def);
+				const bool = (v: unknown, def: boolean) => (typeof v === "boolean" ? v : def);
 
 				const validStrategies = ["structured", "llm-summary", "diff-only", "truncate"] as const;
 				const strategyVal = str(parsed.compression_strategy, DEFAULTS.compression_strategy);
 				const strategy = (validStrategies as readonly string[]).includes(strategyVal)
-					? strategyVal as SwarmConfig["compression_strategy"]
+					? (strategyVal as SwarmConfig["compression_strategy"])
 					: DEFAULTS.compression_strategy;
 
 				return {
@@ -175,8 +174,18 @@ export function loadConfig(cwd?: string): SwarmConfig {
 					max_threads: clamp(parsed.max_threads, 1, 20, DEFAULTS.max_threads),
 					max_total_threads: clamp(parsed.max_total_threads, 1, 100, DEFAULTS.max_total_threads),
 					thread_timeout_ms: clamp(parsed.thread_timeout_ms, 10000, 3600000, DEFAULTS.thread_timeout_ms),
-					max_thread_budget_usd: typeof parsed.max_thread_budget_usd === "number" && isFinite(parsed.max_thread_budget_usd) && parsed.max_thread_budget_usd > 0 ? parsed.max_thread_budget_usd : DEFAULTS.max_thread_budget_usd,
-					max_session_budget_usd: typeof parsed.max_session_budget_usd === "number" && isFinite(parsed.max_session_budget_usd) && parsed.max_session_budget_usd > 0 ? parsed.max_session_budget_usd : DEFAULTS.max_session_budget_usd,
+					max_thread_budget_usd:
+						typeof parsed.max_thread_budget_usd === "number" &&
+						Number.isFinite(parsed.max_thread_budget_usd) &&
+						parsed.max_thread_budget_usd > 0
+							? parsed.max_thread_budget_usd
+							: DEFAULTS.max_thread_budget_usd,
+					max_session_budget_usd:
+						typeof parsed.max_session_budget_usd === "number" &&
+						Number.isFinite(parsed.max_session_budget_usd) &&
+						parsed.max_session_budget_usd > 0
+							? parsed.max_session_budget_usd
+							: DEFAULTS.max_session_budget_usd,
 					default_agent: str(parsed.default_agent, DEFAULTS.default_agent),
 					default_model: str(parsed.default_model, DEFAULTS.default_model),
 					auto_model_selection: bool(parsed.auto_model_selection, DEFAULTS.auto_model_selection),

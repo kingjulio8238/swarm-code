@@ -23,9 +23,9 @@
  *   - Aggregate episodic stats: fallback to best-performing agent per slot
  */
 
-import type { SwarmConfig } from "../core/types.js";
-import type { ModelSlots } from "../config.js";
 import { getAvailableAgents } from "../agents/provider.js";
+import type { ModelSlots } from "../config.js";
+import type { SwarmConfig } from "../core/types.js";
 import type { EpisodicMemory } from "../memory/episodic.js";
 
 // ── Agent capabilities ─────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ export interface AgentCapability {
 }
 
 export const AGENT_CAPABILITIES: Record<string, AgentCapability> = {
-	"opencode": {
+	opencode: {
 		name: "opencode",
 		costTier: 2,
 		speedTier: 2,
@@ -65,7 +65,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapability> = {
 		cheapModel: "claude-haiku-4-5",
 		premiumModel: "claude-opus-4-6",
 	},
-	"codex": {
+	codex: {
 		name: "codex",
 		costTier: 2,
 		speedTier: 2,
@@ -74,7 +74,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapability> = {
 		cheapModel: "gpt-4o-mini",
 		premiumModel: "o3",
 	},
-	"aider": {
+	aider: {
 		name: "aider",
 		costTier: 1,
 		speedTier: 1,
@@ -104,22 +104,41 @@ export function classifyTaskComplexity(task: string): TaskComplexity {
 
 	// Complex indicators
 	const complexPatterns = [
-		"refactor", "architect", "redesign", "migrate",
-		"rewrite", "overhaul", "restructure",
-		"security audit", "performance optim",
-		"complex", "multiple files", "across the codebase",
-		"entire", "all files", "comprehensive",
+		"refactor",
+		"architect",
+		"redesign",
+		"migrate",
+		"rewrite",
+		"overhaul",
+		"restructure",
+		"security audit",
+		"performance optim",
+		"complex",
+		"multiple files",
+		"across the codebase",
+		"entire",
+		"all files",
+		"comprehensive",
 	];
-	if (complexPatterns.some(p => lower.includes(p))) return "complex";
+	if (complexPatterns.some((p) => lower.includes(p))) return "complex";
 
 	// Simple indicators
 	const simplePatterns = [
-		"add comment", "fix typo", "rename", "format",
-		"lint", "add import", "remove unused",
-		"update version", "bump", "simple",
-		"add docstring", "fix indent", "whitespace",
+		"add comment",
+		"fix typo",
+		"rename",
+		"format",
+		"lint",
+		"add import",
+		"remove unused",
+		"update version",
+		"bump",
+		"simple",
+		"add docstring",
+		"fix indent",
+		"whitespace",
 	];
-	if (simplePatterns.some(p => lower.includes(p))) return "simple";
+	if (simplePatterns.some((p) => lower.includes(p))) return "simple";
 
 	// Default to medium
 	return "medium";
@@ -134,7 +153,7 @@ export function classifyTaskComplexity(task: string): TaskComplexity {
 export type TaskSlot = "execution" | "search" | "reasoning" | "planning";
 
 export const DEFAULT_MODEL_SLOTS: ModelSlots = {
-	execution: "",  // empty = use agent's default based on complexity
+	execution: "", // empty = use agent's default based on complexity
 	search: "",
 	reasoning: "",
 	planning: "",
@@ -154,27 +173,58 @@ export function classifyTaskSlot(task: string): TaskSlot {
 
 	// Search patterns — retrieving information, finding things
 	const searchPatterns = [
-		"search", "find", "look up", "locate", "grep",
-		"what is", "where is", "which file", "list all",
-		"documentation", "docs", "research", "investigate",
+		"search",
+		"find",
+		"look up",
+		"locate",
+		"grep",
+		"what is",
+		"where is",
+		"which file",
+		"list all",
+		"documentation",
+		"docs",
+		"research",
+		"investigate",
 	];
-	if (searchPatterns.some(p => lower.includes(p))) return "search";
+	if (searchPatterns.some((p) => lower.includes(p))) return "search";
 
 	// Reasoning patterns — analysis, review, understanding
 	const reasoningPatterns = [
-		"analyze", "analysis", "review", "explain", "understand",
-		"why does", "how does", "debug", "diagnose", "trace",
-		"reason", "evaluate", "assess", "compare",
+		"analyze",
+		"analysis",
+		"review",
+		"explain",
+		"understand",
+		"why does",
+		"how does",
+		"debug",
+		"diagnose",
+		"trace",
+		"reason",
+		"evaluate",
+		"assess",
+		"compare",
 	];
-	if (reasoningPatterns.some(p => lower.includes(p))) return "reasoning";
+	if (reasoningPatterns.some((p) => lower.includes(p))) return "reasoning";
 
 	// Planning patterns — design, architecture, strategy
 	const planningPatterns = [
-		"plan", "design", "architect", "propose", "strategy",
-		"roadmap", "outline", "spec", "specification", "rfc",
-		"how should", "what approach", "break down",
+		"plan",
+		"design",
+		"architect",
+		"propose",
+		"strategy",
+		"roadmap",
+		"outline",
+		"spec",
+		"specification",
+		"rfc",
+		"how should",
+		"what approach",
+		"break down",
 	];
-	if (planningPatterns.some(p => lower.includes(p))) return "planning";
+	if (planningPatterns.some((p) => lower.includes(p))) return "planning";
 
 	// Default: execution (coding, fixing, building)
 	return "execution";
@@ -234,7 +284,7 @@ export class FailureTracker {
 	 * Classifies the error as transient or permanent based on pattern matching.
 	 */
 	recordFailure(agent: string, model: string, task: string, error: string): void {
-		const isTransient = TRANSIENT_ERROR_PATTERNS.some(p => p.test(error));
+		const isTransient = TRANSIENT_ERROR_PATTERNS.some((p) => p.test(error));
 		this.failures.push({
 			agent,
 			model,
@@ -262,7 +312,7 @@ export class FailureTracker {
 			const age = now - f.timestamp;
 			const halfLife = f.isTransient ? this.transientHalfLifeMs : this.permanentHalfLifeMs;
 			// Exponential decay: weight = 2^(-age/halfLife)
-			const weight = Math.pow(2, -age / halfLife);
+			const weight = 2 ** (-age / halfLife);
 			weightedFailures += weight;
 		}
 
@@ -286,7 +336,7 @@ export class FailureTracker {
 
 	/** Get the number of raw (undecayed) failures for an agent. */
 	getFailureCount(agent: string): number {
-		return this.failures.filter(f => f.agent === agent).length;
+		return this.failures.filter((f) => f.agent === agent).length;
 	}
 
 	/** Clear all failure records. */
@@ -298,7 +348,8 @@ export class FailureTracker {
 // ── File pattern extraction ────────────────────────────────────────────────
 
 /** Common file extensions to look for in task descriptions. */
-const FILE_EXTENSION_PATTERN = /\.(ts|tsx|js|jsx|py|rs|go|java|rb|cpp|c|h|css|scss|html|json|yaml|yml|toml|md|sql|sh|bash|zsh|vue|svelte|swift|kt|cs|php)\b/gi;
+const FILE_EXTENSION_PATTERN =
+	/\.(ts|tsx|js|jsx|py|rs|go|java|rb|cpp|c|h|css|scss|html|json|yaml|yml|toml|md|sql|sh|bash|zsh|vue|svelte|swift|kt|cs|php)\b/gi;
 
 /**
  * Extract file extensions mentioned in a task description.
@@ -307,7 +358,7 @@ const FILE_EXTENSION_PATTERN = /\.(ts|tsx|js|jsx|py|rs|go|java|rb|cpp|c|h|css|sc
 export function extractFileExtensions(task: string): string[] {
 	const matches = task.match(FILE_EXTENSION_PATTERN);
 	if (!matches) return [];
-	const unique = new Set(matches.map(m => m.toLowerCase()));
+	const unique = new Set(matches.map((m) => m.toLowerCase()));
 	return [...unique];
 }
 
@@ -369,8 +420,11 @@ export async function routeTask(
 
 	// If episodic memory has a recommendation at confidence >= 0.3, consider it —
 	// but weight by (1 - failureRate) of the recommended agent
-	if (memoryRecommendation && memoryRecommendation.confidence >= 0.3 &&
-		available.includes(memoryRecommendation.agent)) {
+	if (
+		memoryRecommendation &&
+		memoryRecommendation.confidence >= 0.3 &&
+		available.includes(memoryRecommendation.agent)
+	) {
 		const failureRate = failureTracker?.getFailureRate(memoryRecommendation.agent) ?? 0;
 		const adjustedConfidence = memoryRecommendation.confidence * (1 - failureRate);
 
@@ -380,7 +434,8 @@ export async function routeTask(
 				agent: memoryRecommendation.agent,
 				model: slotModel || memoryRecommendation.model,
 				slot,
-				reason: `${slot}/${complexity} → ${memoryRecommendation.agent} (episodic memory, ` +
+				reason:
+					`${slot}/${complexity} → ${memoryRecommendation.agent} (episodic memory, ` +
 					`${(memoryRecommendation.confidence * 100).toFixed(0)}% confidence` +
 					`${failureRate > 0 ? `, adjusted: ${(adjustedConfidence * 100).toFixed(0)}%` : ""})`,
 			};
@@ -408,12 +463,12 @@ export async function routeTask(
 
 	// Score each available agent for this task
 	const scored = available
-		.filter(name => {
+		.filter((name) => {
 			// Skip agents that are fully failed (100% failure rate)
 			if (failureTracker?.isFullyFailed(name)) return false;
 			return true;
 		})
-		.map(name => {
+		.map((name) => {
 			const cap = AGENT_CAPABILITIES[name];
 			if (!cap) return { name, score: 0, model: config.default_model };
 
@@ -466,7 +521,7 @@ export async function routeTask(
 			// Complexity-cost alignment
 			if (complexity === "simple") {
 				// Prefer cheap + fast agents
-				score += (5 - cap.costTier) + (5 - cap.speedTier);
+				score += 5 - cap.costTier + (5 - cap.speedTier);
 			} else if (complexity === "medium") {
 				// Balanced — moderate cost/capability, favor speed
 				score += 3 - Math.abs(cap.costTier - 2) + (4 - cap.speedTier);
@@ -489,9 +544,15 @@ export async function routeTask(
 				model = memoryRecommendation.model;
 			} else {
 				switch (complexity) {
-					case "simple": model = cap.cheapModel; break;
-					case "complex": model = cap.premiumModel; break;
-					default: model = cap.defaultModel; break;
+					case "simple":
+						model = cap.cheapModel;
+						break;
+					case "complex":
+						model = cap.premiumModel;
+						break;
+					default:
+						model = cap.defaultModel;
+						break;
 				}
 			}
 
@@ -512,9 +573,7 @@ export async function routeTask(
 	const best = scored[0];
 	const memNote = memoryRecommendation ? `, memory: ${memoryRecommendation.agent}` : "";
 	const bestFailRate = failureTracker?.getFailureRate(best.name) ?? 0;
-	const failNote = bestFailRate > 0
-		? `, failures: ${(bestFailRate * 100).toFixed(0)}%`
-		: "";
+	const failNote = bestFailRate > 0 ? `, failures: ${(bestFailRate * 100).toFixed(0)}%` : "";
 
 	return {
 		agent: best.name,
@@ -543,7 +602,7 @@ export async function describeAvailableAgents(): Promise<string> {
 		const speed = ["fast", "fast", "medium", "slow", "very slow"][cap.speedTier - 1];
 		lines.push(
 			`- **${name}** (${cost}, ${speed}): ${cap.strengths.join(", ")}` +
-			`\n  Default model: \`${cap.defaultModel}\` | Cheap: \`${cap.cheapModel}\` | Premium: \`${cap.premiumModel}\``
+				`\n  Default model: \`${cap.defaultModel}\` | Cheap: \`${cap.cheapModel}\` | Premium: \`${cap.premiumModel}\``,
 		);
 	}
 

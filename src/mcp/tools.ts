@@ -10,25 +10,25 @@
  *   - swarm_cleanup: Destroy session and worktrees
  */
 
-import { z } from "zod";
-import { execFile, type ChildProcess } from "node:child_process";
+import { type ChildProcess, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import {
-	getSession,
-	spawnThread,
-	getThreads,
-	getBudgetState,
-	mergeThreads,
 	cancelThreads,
 	cleanupSession,
+	getBudgetState,
+	getSession,
+	getThreads,
+	mergeThreads,
+	spawnThread,
 } from "./session.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function textResult(text: string) {
+function _textResult(text: string) {
 	return { content: [{ type: "text" as const, text }] };
 }
 
@@ -46,7 +46,11 @@ const activeSubprocesses = new Set<ChildProcess>();
 /** Kill all tracked subprocesses. Called during server shutdown. */
 export function killActiveSubprocesses(): void {
 	for (const child of activeSubprocesses) {
-		try { child.kill("SIGTERM"); } catch { /* already dead */ }
+		try {
+			child.kill("SIGTERM");
+		} catch {
+			/* already dead */
+		}
 	}
 	activeSubprocesses.clear();
 }
@@ -54,7 +58,6 @@ export function killActiveSubprocesses(): void {
 // ── Tool Registration ──────────────────────────────────────────────────────
 
 export function registerTools(server: McpServer, defaultDir?: string): void {
-
 	// Helper: resolve dir from tool args or default, validate existence
 	function resolveDir(dir?: string): string | null {
 		const resolved = dir || defaultDir;
@@ -78,24 +81,20 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 				"and merges results. Returns a JSON summary with success status, answer, " +
 				"thread stats, and cost breakdown.",
 			inputSchema: z.object({
-				dir: z.string().optional().describe(
-					"Path to the git repository (uses server default if not specified)"
-				),
-				task: z.string().describe(
-					"The coding task to accomplish (e.g., 'add error handling to all API routes')"
-				),
-				agent: z.string().optional().describe(
-					"Agent backend: opencode (default), claude-code, codex, aider, direct-llm"
-				),
-				model: z.string().optional().describe(
-					"Orchestrator model override (e.g., claude-sonnet-4-6, gpt-4o)"
-				),
-				max_budget: z.number().min(0).max(50).optional().describe(
-					"Maximum budget in USD (default: 5.00, hard cap: 50.00)"
-				),
-				auto_route: z.boolean().optional().describe(
-					"Enable auto model/agent routing per thread (default: false)"
-				),
+				dir: z.string().optional().describe("Path to the git repository (uses server default if not specified)"),
+				task: z.string().describe("The coding task to accomplish (e.g., 'add error handling to all API routes')"),
+				agent: z
+					.string()
+					.optional()
+					.describe("Agent backend: opencode (default), claude-code, codex, aider, direct-llm"),
+				model: z.string().optional().describe("Orchestrator model override (e.g., claude-sonnet-4-6, gpt-4o)"),
+				max_budget: z
+					.number()
+					.min(0)
+					.max(50)
+					.optional()
+					.describe("Maximum budget in USD (default: 5.00, hard cap: 50.00)"),
+				auto_route: z.boolean().optional().describe("Enable auto model/agent routing per thread (default: false)"),
 			}),
 		},
 		async (args) => {
@@ -106,10 +105,7 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 			}
 
 			// Build CLI args
-			const cliArgs = [
-				"--dir", resolvedDir,
-				"--json", "--quiet",
-			];
+			const cliArgs = ["--dir", resolvedDir, "--json", "--quiet"];
 			if (args.agent) cliArgs.push("--agent", args.agent);
 			if (args.model) cliArgs.push("--orchestrator", args.model);
 			if (args.max_budget != null) cliArgs.push("--max-budget", String(args.max_budget));
@@ -141,24 +137,15 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 				"returned. Use this for fine-grained control — call multiple times for " +
 				"parallel work, then use swarm_merge to integrate.",
 			inputSchema: z.object({
-				dir: z.string().optional().describe(
-					"Path to the git repository (uses server default if not specified)"
-				),
-				task: z.string().describe(
-					"Task for the coding agent (e.g., 'fix the auth bug in src/auth.ts')"
-				),
-				files: z.array(z.string()).optional().describe(
-					"File paths to focus on (hints for the agent)"
-				),
-				agent: z.string().optional().describe(
-					"Agent backend: opencode (default), claude-code, codex, aider, direct-llm"
-				),
-				model: z.string().optional().describe(
-					"Model override (e.g., anthropic/claude-sonnet-4-6)"
-				),
-				context: z.string().optional().describe(
-					"Additional context to pass to the agent"
-				),
+				dir: z.string().optional().describe("Path to the git repository (uses server default if not specified)"),
+				task: z.string().describe("Task for the coding agent (e.g., 'fix the auth bug in src/auth.ts')"),
+				files: z.array(z.string()).optional().describe("File paths to focus on (hints for the agent)"),
+				agent: z
+					.string()
+					.optional()
+					.describe("Agent backend: opencode (default), claude-code, codex, aider, direct-llm"),
+				model: z.string().optional().describe("Model override (e.g., anthropic/claude-sonnet-4-6)"),
+				context: z.string().optional().describe("Additional context to pass to the agent"),
 			}),
 		},
 		async (args) => {
@@ -201,9 +188,7 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 				"Get the current status of a swarm session — all threads with their " +
 				"status (pending/running/completed/failed), budget spent, and cost breakdown.",
 			inputSchema: z.object({
-				dir: z.string().optional().describe(
-					"Path to the git repository (uses server default if not specified)"
-				),
+				dir: z.string().optional().describe("Path to the git repository (uses server default if not specified)"),
 			}),
 		},
 		async (args) => {
@@ -215,7 +200,7 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 				const threads = getThreads(session);
 				const budget = getBudgetState(session);
 
-				const threadSummaries = threads.map(t => ({
+				const threadSummaries = threads.map((t) => ({
 					id: t.id,
 					task: t.config.task,
 					status: t.status,
@@ -223,9 +208,8 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 					agent: t.config.agent.backend,
 					model: t.config.agent.model,
 					files_changed: t.result?.filesChanged || [],
-					duration_ms: t.completedAt && t.startedAt
-						? t.completedAt - t.startedAt
-						: t.startedAt ? Date.now() - t.startedAt : 0,
+					duration_ms:
+						t.completedAt && t.startedAt ? t.completedAt - t.startedAt : t.startedAt ? Date.now() - t.startedAt : 0,
 					cost_usd: t.result?.estimatedCostUsd ?? t.estimatedCostUsd,
 					error: t.error,
 				}));
@@ -235,10 +219,10 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 					threads: threadSummaries,
 					counts: {
 						total: threads.length,
-						running: threads.filter(t => t.status === "running").length,
-						completed: threads.filter(t => t.status === "completed").length,
-						failed: threads.filter(t => t.status === "failed").length,
-						pending: threads.filter(t => t.status === "pending").length,
+						running: threads.filter((t) => t.status === "running").length,
+						completed: threads.filter((t) => t.status === "completed").length,
+						failed: threads.filter((t) => t.status === "failed").length,
+						pending: threads.filter((t) => t.status === "pending").length,
 					},
 					budget: {
 						spent_usd: budget.totalSpentUsd,
@@ -267,9 +251,7 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 				"Threads that are still running or failed are skipped. Returns " +
 				"per-branch merge results including any conflicts.",
 			inputSchema: z.object({
-				dir: z.string().optional().describe(
-					"Path to the git repository (uses server default if not specified)"
-				),
+				dir: z.string().optional().describe("Path to the git repository (uses server default if not specified)"),
 			}),
 		},
 		async (args) => {
@@ -282,7 +264,7 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 
 				return jsonResult({
 					merged: results.length,
-					results: results.map(r => ({
+					results: results.map((r) => ({
 						branch: r.branch,
 						success: r.success,
 						message: r.message,
@@ -307,12 +289,8 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 				"Cancel running threads. Specify a thread_id to cancel a specific " +
 				"thread, or omit to cancel all running threads in the session.",
 			inputSchema: z.object({
-				dir: z.string().optional().describe(
-					"Path to the git repository (uses server default if not specified)"
-				),
-				thread_id: z.string().optional().describe(
-					"Specific thread ID to cancel (omit to cancel all)"
-				),
+				dir: z.string().optional().describe("Path to the git repository (uses server default if not specified)"),
+				thread_id: z.string().optional().describe("Specific thread ID to cancel (omit to cancel all)"),
 			}),
 		},
 		async (args) => {
@@ -342,9 +320,7 @@ export function registerTools(server: McpServer, defaultDir?: string): void {
 				"worktrees, and frees resources. Call this when you're done with a " +
 				"directory to avoid leftover worktrees.",
 			inputSchema: z.object({
-				dir: z.string().optional().describe(
-					"Path to the git repository (uses server default if not specified)"
-				),
+				dir: z.string().optional().describe("Path to the git repository (uses server default if not specified)"),
 			}),
 		},
 		async (args) => {
@@ -372,32 +348,37 @@ function runSwarmSubprocess(args: string[]): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
 		const { bin, binArgs } = findSwarmEntrypoint();
 
-		const child = execFile(bin, [...binArgs, ...args], {
-			encoding: "utf-8",
-			maxBuffer: 50 * 1024 * 1024,
-			timeout: 30 * 60 * 1000,
-			env: { ...process.env },
-		}, (err, stdout, stderr) => {
-			activeSubprocesses.delete(child);
+		const child = execFile(
+			bin,
+			[...binArgs, ...args],
+			{
+				encoding: "utf-8",
+				maxBuffer: 50 * 1024 * 1024,
+				timeout: 30 * 60 * 1000,
+				env: { ...process.env },
+			},
+			(err, stdout, stderr) => {
+				activeSubprocesses.delete(child);
 
-			if (err) {
-				// Try to parse JSON from stdout even on error
+				if (err) {
+					// Try to parse JSON from stdout even on error
+					const parsed = tryParseSwarmJson(stdout);
+					if (parsed) {
+						resolve(parsed);
+						return;
+					}
+					reject(new Error(stderr || err.message));
+					return;
+				}
+
 				const parsed = tryParseSwarmJson(stdout);
 				if (parsed) {
 					resolve(parsed);
-					return;
+				} else {
+					reject(new Error(`Could not parse swarm output: ${stdout.slice(0, 500)}`));
 				}
-				reject(new Error(stderr || err.message));
-				return;
-			}
-
-			const parsed = tryParseSwarmJson(stdout);
-			if (parsed) {
-				resolve(parsed);
-			} else {
-				reject(new Error(`Could not parse swarm output: ${stdout.slice(0, 500)}`));
-			}
-		});
+			},
+		);
 
 		activeSubprocesses.add(child);
 	});
@@ -439,7 +420,9 @@ function tryParseSwarmJson(stdout: string): Record<string, unknown> | null {
 				if (typeof parsed === "object" && parsed !== null && "success" in parsed) {
 					return parsed;
 				}
-			} catch { /* not JSON */ }
+			} catch {
+				/* not JSON */
+			}
 		}
 	}
 
@@ -452,7 +435,9 @@ function tryParseSwarmJson(stdout: string): Record<string, unknown> | null {
 			if (typeof parsed === "object" && parsed !== null) {
 				return parsed;
 			}
-		} catch { /* give up */ }
+		} catch {
+			/* give up */
+		}
 	}
 
 	return null;

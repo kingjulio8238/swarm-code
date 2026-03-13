@@ -15,13 +15,13 @@
  *   - loadConfig(cwd) avoids process.chdir() race conditions
  */
 
-import * as path from "node:path";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { SwarmConfig } from "../config.js";
 import { loadConfig } from "../config.js";
+import type { BudgetState, CompressedResult, MergeResult, ThreadConfig, ThreadState } from "../core/types.js";
 import { ThreadManager } from "../threads/manager.js";
 import { mergeAllThreads } from "../worktree/merge.js";
-import type { ThreadState, CompressedResult, BudgetState, ThreadConfig, MergeResult } from "../core/types.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -144,10 +144,7 @@ async function initSession(absDir: string): Promise<SwarmSession> {
 /**
  * Spawn a thread in a session.
  */
-export async function spawnThread(
-	session: SwarmSession,
-	params: ThreadSpawnParams,
-): Promise<CompressedResult> {
+export async function spawnThread(session: SwarmSession, params: ThreadSpawnParams): Promise<CompressedResult> {
 	const threadId = `mcp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
 	const threadConfig: ThreadConfig = {
@@ -196,7 +193,7 @@ export function cancelThreads(session: SwarmSession, threadId?: string): { cance
 		const cancelled = session.threadManager.cancelThread(threadId);
 		if (!cancelled) {
 			const threads = session.threadManager.getThreads();
-			const thread = threads.find(t => t.id === threadId);
+			const thread = threads.find((t) => t.id === threadId);
 			if (!thread) return { cancelled: false, message: `Thread ${threadId} not found` };
 			return { cancelled: false, message: `Thread ${threadId} is ${thread.status}, cannot cancel` };
 		}

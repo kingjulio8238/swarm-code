@@ -7,23 +7,23 @@
  * Uses real temporary git repos with the mock agent backend.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createTempGitRepo, cleanupTempRepo } from "../fixtures/helpers.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanupTempRepo, createTempGitRepo } from "../fixtures/helpers.js";
 
 // Register mock agent before importing session module
 import "../../src/agents/mock.js";
 
 import {
-	getSession,
-	spawnThread,
-	getThreads,
-	getBudgetState,
-	mergeThreads,
 	cancelThreads,
-	cleanupSession,
 	cleanupAllSessions,
+	cleanupSession,
+	getBudgetState,
+	getSession,
+	getThreads,
+	mergeThreads,
+	spawnThread,
 } from "../../src/mcp/session.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -108,9 +108,7 @@ describe("MCP Session: getSession", () => {
 	});
 
 	it("throws for a non-existent directory", async () => {
-		await expect(getSession("/tmp/nonexistent-dir-xyz-12345")).rejects.toThrow(
-			/does not exist/,
-		);
+		await expect(getSession("/tmp/nonexistent-dir-xyz-12345")).rejects.toThrow(/does not exist/);
 	});
 });
 

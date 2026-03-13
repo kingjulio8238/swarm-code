@@ -1,9 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import {
-	compressResult,
-	setSummarizer,
-	type CompressionInput,
-} from "../../src/compression/compressor.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { type CompressionInput, compressResult, setSummarizer } from "../../src/compression/compressor.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,12 +41,7 @@ describe("Episode quality filter (via compressResult)", () => {
 
 	it("strips Python Traceback line", async () => {
 		const input = makeInput({
-			agentOutput: [
-				"Starting task",
-				"Traceback (most recent call last):",
-				"",
-				"Completed the fix",
-			].join("\n"),
+			agentOutput: ["Starting task", "Traceback (most recent call last):", "", "Completed the fix"].join("\n"),
 		});
 		const result = await compressResult(input, "structured");
 		expect(result).not.toContain("Traceback");
@@ -73,17 +64,9 @@ describe("Episode quality filter (via compressResult)", () => {
 	});
 
 	it("strips failure noise lines", async () => {
-		const noiseLines = [
-			"error: cannot find module",
-			"retrying request to API",
-			"Thinking...",
-		];
+		const noiseLines = ["error: cannot find module", "retrying request to API", "Thinking..."];
 		const input = makeInput({
-			agentOutput: [
-				"Good line before",
-				...noiseLines,
-				"Good line after",
-			].join("\n"),
+			agentOutput: ["Good line before", ...noiseLines, "Good line after"].join("\n"),
 		});
 		const result = await compressResult(input, "structured");
 		expect(result).not.toContain("error: cannot find module");

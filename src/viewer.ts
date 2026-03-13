@@ -11,9 +11,8 @@
  */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import * as readline from "node:readline";
+import * as path from "node:path";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -133,11 +132,7 @@ function centeredHeader(text: string, color = c.cyan): string {
 	return `${color}${"━".repeat(left)} ${text}${color} ${"━".repeat(right)}${c.reset}`;
 }
 
-function boxed(
-	title: string,
-	content: string,
-	color: string,
-): void {
+function boxed(title: string, content: string, color: string): void {
 	const w = getWidth() - 4;
 	const display = content;
 	W(`  ${color}${c.bold}${title}${c.reset}\n`);
@@ -178,10 +173,12 @@ function parseTrajectoryMeta(filePath: string): Partial<TrajectoryData> | undefi
 		const data = JSON.parse(raw);
 		return {
 			query: data.query,
-			iterations: data.iterations ? new Array(data.iterations.length) as any : [],
-			result: data.result ? { completed: data.result.completed } as any : null,
+			iterations: data.iterations ? (new Array(data.iterations.length) as any) : [],
+			result: data.result ? ({ completed: data.result.completed } as any) : null,
 		};
-	} catch { return undefined; }
+	} catch {
+		return undefined;
+	}
 }
 
 function listTrajectories(): FileEntry[] {
@@ -225,9 +222,12 @@ async function pickFile(files: FileEntry[]): Promise<string> {
 				// Extract info from trajectory data
 				const steps = f.traj?.iterations?.length ?? 0;
 				const completed = f.traj?.result?.completed;
-				const status = completed === true ? `${c.green}done${c.reset}` : completed === false ? `${c.yellow}partial${c.reset}` : "";
+				const status =
+					completed === true ? `${c.green}done${c.reset}` : completed === false ? `${c.yellow}partial${c.reset}` : "";
 				const queryPreview = f.traj?.query
-					? (f.traj.query.length > 40 ? f.traj.query.slice(0, 37) + "..." : f.traj.query)
+					? f.traj.query.length > 40
+						? `${f.traj.query.slice(0, 37)}...`
+						: f.traj.query
 					: "";
 
 				// Date from filename
@@ -246,7 +246,9 @@ async function pickFile(files: FileEntry[]): Promise<string> {
 			}
 
 			if (files.length > maxVisible) {
-				W(`\n  ${c.dim}${scrollStart > 0 ? "^ more above" : ""}  ${scrollEnd < files.length ? "v more below" : ""}${c.reset}\n`);
+				W(
+					`\n  ${c.dim}${scrollStart > 0 ? "^ more above" : ""}  ${scrollEnd < files.length ? "v more below" : ""}${c.reset}\n`,
+				);
 			}
 			W(`\n`);
 		}
@@ -281,7 +283,17 @@ async function pickFile(files: FileEntry[]): Promise<string> {
 
 // ── Rendering views ─────────────────────────────────────────────────────────
 
-type ViewMode = "overview" | "iteration" | "result" | "subqueries" | "subqueryDetail" | "llmInput" | "llmResponse" | "systemPrompt" | "swarm" | "swarmThreadDetail";
+type ViewMode =
+	| "overview"
+	| "iteration"
+	| "result"
+	| "subqueries"
+	| "subqueryDetail"
+	| "llmInput"
+	| "llmResponse"
+	| "systemPrompt"
+	| "swarm"
+	| "swarmThreadDetail";
 
 interface ViewState {
 	mode: ViewMode;
@@ -328,8 +340,12 @@ function renderOverview(state: ViewState): void {
 	buf.push(``);
 	buf.push(`  ${c.gray}Model   :${c.reset} ${c.bold}${traj.model}${c.reset}`);
 	buf.push(`  ${c.gray}Query   :${c.reset} ${c.yellow}${traj.query}${c.reset}`);
-	buf.push(`  ${c.gray}Context :${c.reset} ${traj.contextLength.toLocaleString()} chars | ${traj.contextLines.toLocaleString()} lines`);
-	buf.push(`  ${c.gray}Duration:${c.reset} ${(traj.totalElapsedMs / 1000).toFixed(1)}s  ${c.gray}|${c.reset}  ${traj.result?.completed ? `${c.green}Completed${c.reset}` : `${c.red}Incomplete${c.reset}`}`);
+	buf.push(
+		`  ${c.gray}Context :${c.reset} ${traj.contextLength.toLocaleString()} chars | ${traj.contextLines.toLocaleString()} lines`,
+	);
+	buf.push(
+		`  ${c.gray}Duration:${c.reset} ${(traj.totalElapsedMs / 1000).toFixed(1)}s  ${c.gray}|${c.reset}  ${traj.result?.completed ? `${c.green}Completed${c.reset}` : `${c.red}Incomplete${c.reset}`}`,
+	);
 	buf.push(``);
 	buf.push(`  ${c.bold}Iterations${c.reset}  ${c.dim}(${traj.iterations.length} total)${c.reset}`);
 	buf.push(``);
@@ -389,12 +405,14 @@ function renderOverview(state: ViewState): void {
 
 	// Render
 	W(c.cursorHome, c.clearScreen, c.hideCursor);
-	for (const l of buf) W(l + "\n");
+	for (const l of buf) W(`${l}\n`);
 
 	// Footer
-	W(hline("─", c.gray) + "\n");
+	W(`${hline("─", c.gray)}\n`);
 	const swarmHint = traj.swarm ? `  ${c.dim}t${c.reset} threads` : "";
-	W(`  ${c.dim}up/down${c.reset} select  ${c.dim}enter${c.reset} view  ${c.dim}r${c.reset} result${swarmHint}  ${c.dim}q${c.reset} quit\n`);
+	W(
+		`  ${c.dim}up/down${c.reset} select  ${c.dim}enter${c.reset} view  ${c.dim}r${c.reset} result${swarmHint}  ${c.dim}q${c.reset} quit\n`,
+	);
 }
 
 function buildIterationContent(step: TrajectoryStep, traj: TrajectoryData): string[] {
@@ -405,7 +423,9 @@ function buildIterationContent(step: TrajectoryStep, traj: TrajectoryData): stri
 	lines.push(``);
 	lines.push(hline());
 	const finalTag = step.hasFinal ? `  ${c.green}${c.bold}FINAL${c.reset}` : "";
-	lines.push(centeredHeader(`${c.bold}${c.white}Iteration ${step.iteration} / ${traj.iterations.length}${c.reset}${finalTag}`));
+	lines.push(
+		centeredHeader(`${c.bold}${c.white}Iteration ${step.iteration} / ${traj.iterations.length}${c.reset}${finalTag}`),
+	);
 	lines.push(hline());
 	lines.push(``);
 
@@ -413,7 +433,9 @@ function buildIterationContent(step: TrajectoryStep, traj: TrajectoryData): stri
 	const elapsed = (step.elapsedMs / 1000).toFixed(1);
 	lines.push(`  ${c.gray}Elapsed    :${c.reset} ${elapsed}s`);
 	lines.push(`  ${c.gray}Sub-queries:${c.reset} ${step.subQueries.length}`);
-	lines.push(`  ${c.gray}Has Final  :${c.reset} ${step.hasFinal ? `${c.green}yes${c.reset}` : `${c.gray}no${c.reset}`}`);
+	lines.push(
+		`  ${c.gray}Has Final  :${c.reset} ${step.hasFinal ? `${c.green}yes${c.reset}` : `${c.gray}no${c.reset}`}`,
+	);
 	lines.push(``);
 
 	// Code
@@ -457,11 +479,15 @@ function buildIterationContent(step: TrajectoryStep, traj: TrajectoryData): stri
 
 	// Sub-queries
 	if (step.subQueries.length > 0) {
-		lines.push(`  ${c.magenta}${c.bold}Sub-queries (${step.subQueries.length})${c.reset}  ${c.dim}press 's' for details${c.reset}`);
+		lines.push(
+			`  ${c.magenta}${c.bold}Sub-queries (${step.subQueries.length})${c.reset}  ${c.dim}press 's' for details${c.reset}`,
+		);
 		for (const sq of step.subQueries) {
-			const instrPreview = sq.instruction.length > 60 ? sq.instruction.slice(0, 57) + "..." : sq.instruction;
+			const instrPreview = sq.instruction.length > 60 ? `${sq.instruction.slice(0, 57)}...` : sq.instruction;
 			const sqElapsed = sq.elapsedMs ? `  ${c.dim}${(sq.elapsedMs / 1000).toFixed(1)}s${c.reset}` : "";
-			lines.push(`    ${c.magenta}#${sq.index}${c.reset} ${c.dim}(${formatSize(sq.contextLength)})${c.reset}${sqElapsed} ${instrPreview}`);
+			lines.push(
+				`    ${c.magenta}#${sq.index}${c.reset} ${c.dim}(${formatSize(sq.contextLength)})${c.reset}${sqElapsed} ${instrPreview}`,
+			);
 		}
 		lines.push(``);
 	}
@@ -488,7 +514,7 @@ function renderIteration(state: ViewState): void {
 	const from = state.scrollY;
 	// Reserve lines for scroll indicators when needed
 	const hasScrollUp = from > 0;
-	const hasScrollDown = (from + viewable) < allLines.length;
+	const hasScrollDown = from + viewable < allLines.length;
 	const contentLines = viewable - (hasScrollUp ? 1 : 0) - (hasScrollDown ? 1 : 0);
 	const to = Math.min(allLines.length, from + contentLines);
 
@@ -497,7 +523,7 @@ function renderIteration(state: ViewState): void {
 	if (hasScrollUp) {
 		W(`  ${c.dim}^ scroll up (${from} lines above)${c.reset}\n`);
 	}
-	for (let i = from; i < to; i++) W(allLines[i] + "\n");
+	for (let i = from; i < to; i++) W(`${allLines[i]}\n`);
 
 	if (hasScrollDown) {
 		W(`  ${c.dim}v scroll down (${allLines.length - to} lines below)${c.reset}\n`);
@@ -509,7 +535,7 @@ function renderIteration(state: ViewState): void {
 	if (step.rawResponse) hints.push(`${c.dim}l${c.reset} response`);
 	if (step.systemPrompt || traj.iterations[0]?.systemPrompt) hints.push(`${c.dim}p${c.reset} prompt`);
 
-	W(hline("─", c.gray) + "\n");
+	W(`${hline("─", c.gray)}\n`);
 	W(`  ${c.dim}esc${c.reset} back  `);
 	W(`${c.dim}up/down${c.reset} scroll  `);
 	W(`${c.dim}n/N${c.reset} next/prev`);
@@ -580,7 +606,7 @@ function renderSubQueries(state: ViewState): void {
 			const sq = step.subQueries[i];
 			const isSel = i === state.subQueryIdx;
 			const sqElapsed = sq.elapsedMs ? `${(sq.elapsedMs / 1000).toFixed(1)}s` : "";
-			const instrPreview = sq.instruction.length > 50 ? sq.instruction.slice(0, 47) + "..." : sq.instruction;
+			const instrPreview = sq.instruction.length > 50 ? `${sq.instruction.slice(0, 47)}...` : sq.instruction;
 
 			sqStartOffsets.push(listLines.length);
 
@@ -618,11 +644,13 @@ function renderSubQueries(state: ViewState): void {
 
 	// Render
 	W(c.cursorHome, c.clearScreen, c.hideCursor);
-	for (const l of buf) W(l + "\n");
+	for (const l of buf) W(`${l}\n`);
 
 	// Footer
-	W(hline("─", c.gray) + "\n");
-	W(`  ${c.dim}up/down${c.reset} select  ${c.dim}enter${c.reset} view  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`);
+	W(`${hline("─", c.gray)}\n`);
+	W(
+		`  ${c.dim}up/down${c.reset} select  ${c.dim}enter${c.reset} view  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`,
+	);
 }
 
 function renderSubQueryDetail(state: ViewState): void {
@@ -644,10 +672,9 @@ function renderSubQueryDetail(state: ViewState): void {
 
 	allLines.push(``);
 	allLines.push(hline("━", c.magenta));
-	allLines.push(centeredHeader(
-		`${c.bold}${c.white}Sub-query #${sq.index} — Iteration ${step.iteration}${c.reset}`,
-		c.magenta,
-	));
+	allLines.push(
+		centeredHeader(`${c.bold}${c.white}Sub-query #${sq.index} — Iteration ${step.iteration}${c.reset}`, c.magenta),
+	);
 	allLines.push(hline("━", c.magenta));
 	allLines.push(``);
 
@@ -691,7 +718,7 @@ function renderSubQueryDetail(state: ViewState): void {
 
 	const from = state.scrollY;
 	const hasScrollUp = from > 0;
-	const hasScrollDown = (from + viewable) < allLines.length;
+	const hasScrollDown = from + viewable < allLines.length;
 	const contentLines = viewable - (hasScrollUp ? 1 : 0) - (hasScrollDown ? 1 : 0);
 	const to = Math.min(allLines.length, from + contentLines);
 
@@ -700,15 +727,17 @@ function renderSubQueryDetail(state: ViewState): void {
 	if (hasScrollUp) {
 		W(`  ${c.dim}^ scroll up (${from} lines above)${c.reset}\n`);
 	}
-	for (let i = from; i < to; i++) W(allLines[i] + "\n");
+	for (let i = from; i < to; i++) W(`${allLines[i]}\n`);
 
 	if (hasScrollDown) {
 		W(`  ${c.dim}v scroll down (${allLines.length - to} lines below)${c.reset}\n`);
 	}
 
 	// Footer
-	W(hline("─", c.gray) + "\n");
-	W(`  ${c.dim}up/down${c.reset} scroll  ${c.dim}n/N${c.reset} next/prev  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`);
+	W(`${hline("─", c.gray)}\n`);
+	W(
+		`  ${c.dim}up/down${c.reset} scroll  ${c.dim}n/N${c.reset} next/prev  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`,
+	);
 }
 
 function renderLlmInput(state: ViewState): void {
@@ -795,19 +824,26 @@ function timingBar(durationMs: number, maxDurationMs: number, barWidth: number):
 /** Get status color for a thread. */
 function statusColor(status: SwarmThreadEvent["status"]): string {
 	switch (status) {
-		case "completed": return c.green;
-		case "failed": return c.red;
-		case "cache_hit": return c.yellow;
-		case "cancelled": return c.gray;
-		default: return c.white;
+		case "completed":
+			return c.green;
+		case "failed":
+			return c.red;
+		case "cache_hit":
+			return c.yellow;
+		case "cancelled":
+			return c.gray;
+		default:
+			return c.white;
 	}
 }
 
 /** Get status label for a thread. */
 function statusLabel(status: SwarmThreadEvent["status"]): string {
 	switch (status) {
-		case "cache_hit": return "CACHED";
-		default: return status.toUpperCase();
+		case "cache_hit":
+			return "CACHED";
+		default:
+			return status.toUpperCase();
 	}
 }
 
@@ -848,19 +884,19 @@ function renderSwarmView(state: ViewState): void {
 		buf.push(`  ${c.dim}(Run in swarm mode to generate thread data)${c.reset}`);
 
 		W(c.cursorHome, c.clearScreen, c.hideCursor);
-		for (const l of buf) W(l + "\n");
+		for (const l of buf) W(`${l}\n`);
 		W(`\n${hline("─", c.gray)}\n`);
 		W(`  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`);
 		return;
 	}
 
 	// Compute stats
-	const completed = swarm.threads.filter(t => t.status === "completed").length;
-	const failed = swarm.threads.filter(t => t.status === "failed").length;
-	const cached = swarm.threads.filter(t => t.status === "cache_hit").length;
-	const cancelled = swarm.threads.filter(t => t.status === "cancelled").length;
+	const completed = swarm.threads.filter((t) => t.status === "completed").length;
+	const failed = swarm.threads.filter((t) => t.status === "failed").length;
+	const cached = swarm.threads.filter((t) => t.status === "cache_hit").length;
+	const cancelled = swarm.threads.filter((t) => t.status === "cancelled").length;
 	const aggregateDuration = swarm.threads.reduce((s, t) => s + t.durationMs, 0);
-	const maxDurationMs = Math.max(...swarm.threads.map(t => t.durationMs), 1);
+	const maxDurationMs = Math.max(...swarm.threads.map((t) => t.durationMs), 1);
 
 	// Estimate wall-clock time: sum of max-duration per iteration
 	const byIteration: Map<number, SwarmThreadEvent[]> = new Map();
@@ -873,15 +909,21 @@ function renderSwarmView(state: ViewState): void {
 	let wallClockMs = 0;
 	for (const iter of iterations) {
 		const threads = byIteration.get(iter)!;
-		wallClockMs += Math.max(...threads.map(t => t.durationMs));
+		wallClockMs += Math.max(...threads.map((t) => t.durationMs));
 	}
 
 	// Summary stats
-	buf.push(`  ${c.gray}Threads :${c.reset} ${swarm.threads.length} total  ${c.green}${completed} ok${c.reset}  ${failed > 0 ? `${c.red}${failed} fail${c.reset}  ` : ""}${cached > 0 ? `${c.yellow}${cached} cached${c.reset}  ` : ""}${cancelled > 0 ? `${c.gray}${cancelled} cancelled${c.reset}  ` : ""}`);
+	buf.push(
+		`  ${c.gray}Threads :${c.reset} ${swarm.threads.length} total  ${c.green}${completed} ok${c.reset}  ${failed > 0 ? `${c.red}${failed} fail${c.reset}  ` : ""}${cached > 0 ? `${c.yellow}${cached} cached${c.reset}  ` : ""}${cancelled > 0 ? `${c.gray}${cancelled} cancelled${c.reset}  ` : ""}`,
+	);
 	buf.push(`  ${c.gray}Cost    :${c.reset} $${swarm.totalCostUsd.toFixed(4)}`);
-	buf.push(`  ${c.gray}Time    :${c.reset} ${(wallClockMs / 1000).toFixed(1)}s wall / ${(aggregateDuration / 1000).toFixed(1)}s aggregate  ${c.dim}(${aggregateDuration > 0 ? (aggregateDuration / Math.max(wallClockMs, 1)).toFixed(1) : "1.0"}x parallelism)${c.reset}`);
+	buf.push(
+		`  ${c.gray}Time    :${c.reset} ${(wallClockMs / 1000).toFixed(1)}s wall / ${(aggregateDuration / 1000).toFixed(1)}s aggregate  ${c.dim}(${aggregateDuration > 0 ? (aggregateDuration / Math.max(wallClockMs, 1)).toFixed(1) : "1.0"}x parallelism)${c.reset}`,
+	);
 	if (swarm.cacheStats.hits > 0) {
-		buf.push(`  ${c.gray}Cache   :${c.reset} ${swarm.cacheStats.hits} hits, saved ${(swarm.cacheStats.savedMs / 1000).toFixed(1)}s / $${swarm.cacheStats.savedUsd.toFixed(4)}`);
+		buf.push(
+			`  ${c.gray}Cache   :${c.reset} ${swarm.cacheStats.hits} hits, saved ${(swarm.cacheStats.savedMs / 1000).toFixed(1)}s / $${swarm.cacheStats.savedUsd.toFixed(4)}`,
+		);
 	}
 	if (swarm.episodeCount !== undefined) {
 		buf.push(`  ${c.gray}Episodes:${c.reset} ${swarm.episodeCount} in memory`);
@@ -922,10 +964,11 @@ function renderSwarmView(state: ViewState): void {
 				priorThreadIds.add(pt.threadId);
 			}
 		}
-		const externalDeps = [...allDeps].filter(d => priorThreadIds.has(d));
-		const depSuffix = externalDeps.length > 0
-			? `  ${c.dim}(depends on: ${externalDeps.map(d => d.slice(0, 8)).join(", ")})${c.reset}`
-			: "";
+		const externalDeps = [...allDeps].filter((d) => priorThreadIds.has(d));
+		const depSuffix =
+			externalDeps.length > 0
+				? `  ${c.dim}(depends on: ${externalDeps.map((d) => d.slice(0, 8)).join(", ")})${c.reset}`
+				: "";
 
 		dagLines.push(`  ${c.cyan}${c.bold}Iteration ${iter}${c.reset}${depSuffix}`);
 
@@ -952,7 +995,7 @@ function renderSwarmView(state: ViewState): void {
 			dagLines.push(mainLine);
 
 			// Task description line
-			const taskPreview = t.task.length > 65 ? t.task.slice(0, 62) + "..." : t.task;
+			const taskPreview = t.task.length > 65 ? `${t.task.slice(0, 62)}...` : t.task;
 			const fileCount = t.filesChanged.length;
 			const fileSuffix = fileCount > 0 ? ` ${c.dim}(${fileCount} file${fileCount !== 1 ? "s" : ""})${c.reset}` : "";
 			dagLines.push(`    ${subConnector} └─ ${taskPreview}${fileSuffix}`);
@@ -993,7 +1036,9 @@ function renderSwarmView(state: ViewState): void {
 		const sorted = [...costByAgent.entries()].sort((a, b) => b[1].cost - a[1].cost);
 		for (const [agent, stats] of sorted) {
 			const pct = swarm.totalCostUsd > 0 ? ((stats.cost / swarm.totalCostUsd) * 100).toFixed(0) : "0";
-			dagLines.push(`    ${c.bold}${agent}${c.reset}  ${c.dim}${stats.count} thread${stats.count !== 1 ? "s" : ""}${c.reset}  $${stats.cost.toFixed(4)}  ${c.dim}(${pct}%)${c.reset}  ${c.dim}${(stats.durationMs / 1000).toFixed(1)}s${c.reset}`);
+			dagLines.push(
+				`    ${c.bold}${agent}${c.reset}  ${c.dim}${stats.count} thread${stats.count !== 1 ? "s" : ""}${c.reset}  $${stats.cost.toFixed(4)}  ${c.dim}(${pct}%)${c.reset}  ${c.dim}${(stats.durationMs / 1000).toFixed(1)}s${c.reset}`,
+			);
 		}
 		dagLines.push(`  ${c.yellow}${"─".repeat(40)}${c.reset}`);
 		dagLines.push(`    ${c.bold}Total${c.reset}  ${swarm.threads.length} threads  $${swarm.totalCostUsd.toFixed(4)}`);
@@ -1011,7 +1056,7 @@ function renderSwarmView(state: ViewState): void {
 
 	// Reserve lines for scroll indicators when needed
 	const hasScrollUp = scrollY > 0;
-	const hasScrollDown = (scrollY + dagBudget) < dagLines.length;
+	const hasScrollDown = scrollY + dagBudget < dagLines.length;
 	const contentBudget = dagBudget - (hasScrollUp ? 1 : 0) - (hasScrollDown ? 1 : 0);
 	const showFrom = scrollY;
 	const showTo = Math.min(dagLines.length, scrollY + contentBudget);
@@ -1028,11 +1073,13 @@ function renderSwarmView(state: ViewState): void {
 
 	// Render
 	W(c.cursorHome, c.clearScreen, c.hideCursor);
-	for (const l of buf) W(l + "\n");
+	for (const l of buf) W(`${l}\n`);
 
 	// Footer
-	W(hline("─", c.gray) + "\n");
-	W(`  ${c.dim}up/down${c.reset} select  ${c.dim}enter${c.reset} detail  ${c.dim}c${c.reset} cost  ${c.dim}m${c.reset} merges  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`);
+	W(`${hline("─", c.gray)}\n`);
+	W(
+		`  ${c.dim}up/down${c.reset} select  ${c.dim}enter${c.reset} detail  ${c.dim}c${c.reset} cost  ${c.dim}m${c.reset} merges  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`,
+	);
 }
 
 // ── Swarm thread detail ─────────────────────────────────────────────────────
@@ -1051,7 +1098,7 @@ function renderSwarmThreadDetail(state: ViewState): void {
 
 	const w = getWidth() - 4;
 	const h = getHeight();
-	const maxDurationMs = Math.max(...swarm.threads.map(th => th.durationMs), 1);
+	const maxDurationMs = Math.max(...swarm.threads.map((th) => th.durationMs), 1);
 	const barWidth = 20;
 
 	// Build all content lines
@@ -1059,17 +1106,21 @@ function renderSwarmThreadDetail(state: ViewState): void {
 
 	allLines.push(``);
 	allLines.push(hline("━", c.cyan));
-	allLines.push(centeredHeader(
-		`${c.bold}${c.white}Thread ${t.threadId.slice(0, 8)}  —  ${statusLabel(t.status)}${c.reset}`,
-		c.cyan,
-	));
+	allLines.push(
+		centeredHeader(
+			`${c.bold}${c.white}Thread ${t.threadId.slice(0, 8)}  —  ${statusLabel(t.status)}${c.reset}`,
+			c.cyan,
+		),
+	);
 	allLines.push(hline("━", c.cyan));
 	allLines.push(``);
 
 	// Status with color + timing bar
 	const sColor = statusColor(t.status);
 	const bar = timingBar(t.durationMs, maxDurationMs, barWidth);
-	allLines.push(`  ${c.gray}Status   :${c.reset} ${sColor}${c.bold}${statusLabel(t.status)}${c.reset}  ${sColor}${bar}${c.reset}`);
+	allLines.push(
+		`  ${c.gray}Status   :${c.reset} ${sColor}${c.bold}${statusLabel(t.status)}${c.reset}  ${sColor}${bar}${c.reset}`,
+	);
 	allLines.push(`  ${c.gray}Thread ID:${c.reset} ${t.threadId}`);
 	allLines.push(`  ${c.gray}Iteration:${c.reset} ${t.iteration}`);
 	allLines.push(`  ${c.gray}Agent    :${c.reset} ${t.agent}`);
@@ -1077,7 +1128,9 @@ function renderSwarmThreadDetail(state: ViewState): void {
 	if (t.slot) {
 		allLines.push(`  ${c.gray}Slot     :${c.reset} ${t.slot}`);
 	}
-	allLines.push(`  ${c.gray}Duration :${c.reset} ${(t.durationMs / 1000).toFixed(1)}s  ${c.dim}(${t.durationMs}ms)${c.reset}`);
+	allLines.push(
+		`  ${c.gray}Duration :${c.reset} ${(t.durationMs / 1000).toFixed(1)}s  ${c.dim}(${t.durationMs}ms)${c.reset}`,
+	);
 	allLines.push(`  ${c.gray}Cost     :${c.reset} $${t.estimatedCostUsd.toFixed(4)}`);
 	allLines.push(``);
 
@@ -1094,13 +1147,17 @@ function renderSwarmThreadDetail(state: ViewState): void {
 
 	// Dependencies
 	if (t.dependsOn && t.dependsOn.length > 0) {
-		allLines.push(`  ${c.magenta}${c.bold}Dependencies${c.reset}  ${c.dim}(${t.dependsOn.length} thread${t.dependsOn.length !== 1 ? "s" : ""} provided context)${c.reset}`);
+		allLines.push(
+			`  ${c.magenta}${c.bold}Dependencies${c.reset}  ${c.dim}(${t.dependsOn.length} thread${t.dependsOn.length !== 1 ? "s" : ""} provided context)${c.reset}`,
+		);
 		for (const depId of t.dependsOn) {
-			const depThread = swarm.threads.find(th => th.threadId === depId);
+			const depThread = swarm.threads.find((th) => th.threadId === depId);
 			if (depThread) {
 				const depColor = statusColor(depThread.status);
-				const depTaskPreview = depThread.task.length > 50 ? depThread.task.slice(0, 47) + "..." : depThread.task;
-				allLines.push(`    ${depColor}${depId.slice(0, 8)}${c.reset}  ${depColor}${statusLabel(depThread.status)}${c.reset}  ${c.dim}${depTaskPreview}${c.reset}`);
+				const depTaskPreview = depThread.task.length > 50 ? `${depThread.task.slice(0, 47)}...` : depThread.task;
+				allLines.push(
+					`    ${depColor}${depId.slice(0, 8)}${c.reset}  ${depColor}${statusLabel(depThread.status)}${c.reset}  ${c.dim}${depTaskPreview}${c.reset}`,
+				);
 			} else {
 				allLines.push(`    ${c.dim}${depId.slice(0, 8)}  (not found in thread list)${c.reset}`);
 			}
@@ -1109,13 +1166,17 @@ function renderSwarmThreadDetail(state: ViewState): void {
 	}
 
 	// Downstream (threads that depend on this one)
-	const downstream = swarm.threads.filter(th => th.dependsOn?.includes(t.threadId));
+	const downstream = swarm.threads.filter((th) => th.dependsOn?.includes(t.threadId));
 	if (downstream.length > 0) {
-		allLines.push(`  ${c.blue}${c.bold}Downstream${c.reset}  ${c.dim}(${downstream.length} thread${downstream.length !== 1 ? "s" : ""} depend on this)${c.reset}`);
+		allLines.push(
+			`  ${c.blue}${c.bold}Downstream${c.reset}  ${c.dim}(${downstream.length} thread${downstream.length !== 1 ? "s" : ""} depend on this)${c.reset}`,
+		);
 		for (const ds of downstream) {
 			const dsColor = statusColor(ds.status);
-			const dsTaskPreview = ds.task.length > 50 ? ds.task.slice(0, 47) + "..." : ds.task;
-			allLines.push(`    ${dsColor}${ds.threadId.slice(0, 8)}${c.reset}  ${dsColor}${statusLabel(ds.status)}${c.reset}  ${c.dim}iter ${ds.iteration}${c.reset}  ${c.dim}${dsTaskPreview}${c.reset}`);
+			const dsTaskPreview = ds.task.length > 50 ? `${ds.task.slice(0, 47)}...` : ds.task;
+			allLines.push(
+				`    ${dsColor}${ds.threadId.slice(0, 8)}${c.reset}  ${dsColor}${statusLabel(ds.status)}${c.reset}  ${c.dim}iter ${ds.iteration}${c.reset}  ${c.dim}${dsTaskPreview}${c.reset}`,
+			);
 		}
 		allLines.push(``);
 	}
@@ -1146,7 +1207,7 @@ function renderSwarmThreadDetail(state: ViewState): void {
 
 	const from = state.scrollY;
 	const hasScrollUp = from > 0;
-	const hasScrollDown = (from + viewable) < allLines.length;
+	const hasScrollDown = from + viewable < allLines.length;
 	const contentLines = viewable - (hasScrollUp ? 1 : 0) - (hasScrollDown ? 1 : 0);
 	const to = Math.min(allLines.length, from + contentLines);
 
@@ -1155,15 +1216,17 @@ function renderSwarmThreadDetail(state: ViewState): void {
 	if (hasScrollUp) {
 		W(`  ${c.dim}^ scroll up (${from} lines above)${c.reset}\n`);
 	}
-	for (let i = from; i < to; i++) W(allLines[i] + "\n");
+	for (let i = from; i < to; i++) W(`${allLines[i]}\n`);
 
 	if (hasScrollDown) {
 		W(`  ${c.dim}v scroll down (${allLines.length - to} lines below)${c.reset}\n`);
 	}
 
 	// Footer
-	W(hline("─", c.gray) + "\n");
-	W(`  ${c.dim}up/down${c.reset} scroll  ${c.dim}n/N${c.reset} next/prev  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`);
+	W(`${hline("─", c.gray)}\n`);
+	W(
+		`  ${c.dim}up/down${c.reset} scroll  ${c.dim}n/N${c.reset} next/prev  ${c.dim}esc${c.reset} back  ${c.dim}q${c.reset} quit\n`,
+	);
 }
 
 // ── Minimal syntax highlighting ─────────────────────────────────────────────
@@ -1191,12 +1254,20 @@ async function main(): Promise<void> {
 
 	// Ensure we always restore terminal on exit (alt screen, cursor, raw mode)
 	const cleanup = () => {
-		try { process.stdin.setRawMode(false); } catch {}
+		try {
+			process.stdin.setRawMode(false);
+		} catch {}
 		W(c.showCursor, c.altScreenOff);
 	};
 	process.on("exit", cleanup);
-	process.on("SIGINT", () => { cleanup(); process.exit(0); });
-	process.on("SIGTERM", () => { cleanup(); process.exit(0); });
+	process.on("SIGINT", () => {
+		cleanup();
+		process.exit(0);
+	});
+	process.on("SIGTERM", () => {
+		cleanup();
+		process.exit(0);
+	});
 
 	let filePath: string | undefined = process.argv[2];
 

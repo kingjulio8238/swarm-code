@@ -10,7 +10,7 @@
 
 import { spawn } from "node:child_process";
 import * as os from "node:os";
-import type { AgentProvider, AgentRunOptions, AgentResult } from "../core/types.js";
+import type { AgentProvider, AgentResult, AgentRunOptions } from "../core/types.js";
 import { registerAgent } from "./provider.js";
 
 async function commandExists(cmd: string): Promise<boolean> {
@@ -101,13 +101,13 @@ const aiderProvider: AgentProvider = {
 		const startTime = Date.now();
 
 		const args = [
-			"--yes-always",          // Auto-confirm all prompts (except shell commands)
-			"--no-auto-commits",     // Don't auto-commit (worktree manager handles commits)
-			"--no-pretty",           // Disable ANSI colors for clean parsing
-			"--no-stream",           // Don't stream (capture full output)
-			"--no-fancy-input",      // Disable prompt toolkit input
+			"--yes-always", // Auto-confirm all prompts (except shell commands)
+			"--no-auto-commits", // Don't auto-commit (worktree manager handles commits)
+			"--no-pretty", // Disable ANSI colors for clean parsing
+			"--no-stream", // Don't stream (capture full output)
+			"--no-fancy-input", // Disable prompt toolkit input
 			"--no-suggest-shell-commands", // Suppress shell command suggestions
-			"--no-detect-urls",      // Suppress URL detection prompts
+			"--no-detect-urls", // Suppress URL detection prompts
 		];
 
 		if (model) {
@@ -155,7 +155,11 @@ const aiderProvider: AgentProvider = {
 				const onAbort = () => {
 					proc.kill("SIGTERM");
 					const killTimer = setTimeout(() => {
-						try { if (proc.exitCode === null) proc.kill("SIGKILL"); } catch { /* already dead */ }
+						try {
+							if (proc.exitCode === null) proc.kill("SIGKILL");
+						} catch {
+							/* already dead */
+						}
 					}, 3000);
 					proc.on("exit", () => clearTimeout(killTimer));
 				};

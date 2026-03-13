@@ -2,9 +2,9 @@
  * Tests for buildSwarmSystemPrompt — orchestrator system prompt generation.
  */
 
-import { describe, it, expect } from "vitest";
-import { buildSwarmSystemPrompt } from "../../src/prompts/orchestrator.js";
+import { describe, expect, it } from "vitest";
 import type { SwarmConfig } from "../../src/core/types.js";
+import { buildSwarmSystemPrompt } from "../../src/prompts/orchestrator.js";
 
 // ── Mock config ──────────────────────────────────────────────────────────────
 

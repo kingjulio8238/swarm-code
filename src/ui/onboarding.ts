@@ -11,17 +11,13 @@
  * Triggered once on first `swarm --dir` invocation. Saves ~/.swarm/.initialized marker.
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
-import * as readline from "node:readline";
 import { spawn } from "node:child_process";
-
-import {
-	bold, coral, cyan, dim, green, red, yellow, gray,
-	isTTY, symbols, termWidth, stripAnsi, hr,
-} from "./theme.js";
-import { isJsonMode, getLogLevel } from "./log.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as readline from "node:readline";
+import { getLogLevel, isJsonMode } from "./log.js";
+import { bold, coral, cyan, dim, green, isTTY, red, stripAnsi, symbols, termWidth, yellow } from "./theme.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -76,7 +72,7 @@ export function isFirstRun(): boolean {
 function markInitialized(): void {
 	try {
 		fs.mkdirSync(SWARM_DIR, { recursive: true });
-		fs.writeFileSync(MARKER_FILE, new Date().toISOString() + "\n", "utf-8");
+		fs.writeFileSync(MARKER_FILE, `${new Date().toISOString()}\n`, "utf-8");
 	} catch {
 		// Non-fatal — onboarding will just run again next time
 	}
@@ -102,7 +98,9 @@ async function gitVersion(): Promise<string | null> {
 	return new Promise((resolve) => {
 		const proc = spawn("git", ["--version"], { stdio: "pipe" });
 		let out = "";
-		proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
+		proc.stdout?.on("data", (d: Buffer) => {
+			out += d.toString();
+		});
 		proc.on("close", (code) => {
 			if (code === 0) {
 				const match = out.match(/git version (\S+)/);
@@ -128,7 +126,7 @@ function detectApiKeys(): Map<string, string> {
 
 function maskKey(val: string): string {
 	if (val.length <= 12) return "***";
-	return val.slice(0, 7) + "..." + val.slice(-4);
+	return `${val.slice(0, 7)}...${val.slice(-4)}`;
 }
 
 async function checkAgentBackends(): Promise<CheckResult[]> {
@@ -204,10 +202,13 @@ function saveCredential(envVar: string, key: string): void {
 		let existing = "";
 		if (fs.existsSync(CRED_FILE)) {
 			existing = fs.readFileSync(CRED_FILE, "utf-8");
-			existing = existing.split("\n").filter(l => !l.startsWith(`${envVar}=`)).join("\n");
+			existing = existing
+				.split("\n")
+				.filter((l) => !l.startsWith(`${envVar}=`))
+				.join("\n");
 			if (existing && !existing.endsWith("\n")) existing += "\n";
 		}
-		fs.writeFileSync(CRED_FILE, existing + `${envVar}=${key}\n`, { mode: 0o600 });
+		fs.writeFileSync(CRED_FILE, `${existing}${envVar}=${key}\n`, { mode: 0o600 });
 	} catch {
 		// Fall through — key is still set in process.env
 	}
@@ -233,9 +234,9 @@ function saveUserConfig(agent: string, model: string): void {
 
 // ── Swarm mesh art ────────────────────────────────────────────────────────────
 
-const n = (s: string) => cyan(s);   // node
-const c = (s: string) => dim(s);    // connection
-const o = (s: string) => coral(s);  // orchestrator (center)
+const n = (s: string) => cyan(s); // node
+const c = (s: string) => dim(s); // connection
+const o = (s: string) => coral(s); // orchestrator (center)
 
 function buildSwarmArt(): string[] {
 	const COLS = 7;
@@ -262,13 +263,7 @@ function buildSwarmArt(): string[] {
 		return parts.join("");
 	}
 
-	return [
-		nodeRow(false),
-		diagRow(true),
-		nodeRow(true),
-		diagRow(false),
-		nodeRow(false),
-	];
+	return [nodeRow(false), diagRow(true), nodeRow(true), diagRow(false), nodeRow(false)];
 }
 
 const SWARM_ART = buildSwarmArt();
@@ -321,10 +316,10 @@ export async function runOnboarding(): Promise<void> {
 	// ── Gather environment info ──────────────────────────────────────────
 	const username = os.userInfo().username || "there";
 	const gitVer = await gitVersion();
-	let apiKeys = detectApiKeys();
+	const apiKeys = detectApiKeys();
 	const agents = await checkAgentBackends();
-	const availableAgents = agents.filter(a => a.ok);
-	const missingAgents = agents.filter(a => !a.ok);
+	const availableAgents = agents.filter((a) => a.ok);
+	const missingAgents = agents.filter((a) => !a.ok);
 
 	// ── Header line ──────────────────────────────────────────────────────
 	if (isTTY) {
@@ -419,7 +414,7 @@ export async function runOnboarding(): Promise<void> {
 			return { idx: i + 1, name: a.name, line: `    ${cyan(String(i + 1))}  ${bold(a.name)}${rec}  ${desc}` };
 		});
 
-		for (const c of agentChoices) process.stderr.write(c.line + "\n");
+		for (const c of agentChoices) process.stderr.write(`${c.line}\n`);
 		process.stderr.write("\n");
 
 		const prompt = createPrompt();
@@ -436,7 +431,9 @@ export async function runOnboarding(): Promise<void> {
 		process.stderr.write(`  ${green(symbols.check)} Default agent: ${bold(chosenAgent)}\n`);
 	} else if (availableAgents.length === 1) {
 		chosenAgent = availableAgents[0].name;
-		process.stderr.write(`  ${green(symbols.check)} Default agent: ${bold(chosenAgent)} ${dim("(only available backend)")}\n`);
+		process.stderr.write(
+			`  ${green(symbols.check)} Default agent: ${bold(chosenAgent)} ${dim("(only available backend)")}\n`,
+		);
 	} else {
 		// No agents installed — show install instructions
 		process.stderr.write(`  ${yellow(symbols.warn)} No coding agents found. Install at least one:\n\n`);
@@ -454,8 +451,8 @@ export async function runOnboarding(): Promise<void> {
 	const neededKeys = agentInfo?.required ?? ["ANTHROPIC_API_KEY"];
 	// For agents that accept any provider (opencode, aider), at least one key is needed
 	const needsAnyKey = neededKeys.length > 1;
-	const missingKeys = neededKeys.filter(k => !apiKeys.has(k));
-	const hasAnyNeeded = neededKeys.some(k => apiKeys.has(k));
+	const missingKeys = neededKeys.filter((k) => !apiKeys.has(k));
+	const hasAnyNeeded = neededKeys.some((k) => apiKeys.has(k));
 
 	if (missingKeys.length > 0 && !(needsAnyKey && hasAnyNeeded)) {
 		sectionHeader("API Keys", w);
@@ -467,11 +464,13 @@ export async function runOnboarding(): Promise<void> {
 		}
 
 		for (const envVar of missingKeys) {
-			const provider = PROVIDERS.find(p => p.envVar === envVar);
+			const provider = PROVIDERS.find((p) => p.envVar === envVar);
 			if (!provider) continue;
 
 			const prompt = createPrompt();
-			const yn = await prompt.ask(`  ${coral(symbols.arrow)} Configure ${bold(provider.name)} (${dim(envVar)})? [y/n]: `);
+			const yn = await prompt.ask(
+				`  ${coral(symbols.arrow)} Configure ${bold(provider.name)} (${dim(envVar)})? [y/n]: `,
+			);
 			prompt.close();
 
 			if (yn.toLowerCase() !== "y" && yn.toLowerCase() !== "yes") {
@@ -485,7 +484,9 @@ export async function runOnboarding(): Promise<void> {
 			if (key && key.length >= 10) {
 				saveCredential(envVar, key);
 				apiKeys.set(envVar, key);
-				process.stderr.write(`  ${green(symbols.check)} Saved ${provider.name} key to ${dim("~/.swarm/credentials")}\n\n`);
+				process.stderr.write(
+					`  ${green(symbols.check)} Saved ${provider.name} key to ${dim("~/.swarm/credentials")}\n\n`,
+				);
 			} else {
 				process.stderr.write(`  ${dim("Skipped — set later in .env or ~/.swarm/credentials")}\n\n`);
 			}
@@ -500,17 +501,21 @@ export async function runOnboarding(): Promise<void> {
 
 	// ── Step 3: Choose default model ─────────────────────────────────────
 	// Suggest a model based on available keys
-	const configuredProviders = PROVIDERS.filter(p => apiKeys.has(p.envVar));
+	const configuredProviders = PROVIDERS.filter((p) => apiKeys.has(p.envVar));
 	let chosenModel = "anthropic/claude-sonnet-4-6"; // default
 
 	if (configuredProviders.length > 0) {
 		sectionHeader("Default Model", w);
 
-		const modelOptions = configuredProviders.flatMap(p => {
+		const modelOptions = configuredProviders.flatMap((p) => {
 			const models: { label: string; value: string; recommended?: boolean }[] = [];
 			if (p.envVar === "ANTHROPIC_API_KEY") {
 				models.push(
-					{ label: `claude-sonnet-4-6 ${dim("(fast, capable)")}`, value: "anthropic/claude-sonnet-4-6", recommended: true },
+					{
+						label: `claude-sonnet-4-6 ${dim("(fast, capable)")}`,
+						value: "anthropic/claude-sonnet-4-6",
+						recommended: true,
+					},
 					{ label: `claude-opus-4-6 ${dim("(most capable)")}`, value: "anthropic/claude-opus-4-6" },
 				);
 			} else if (p.envVar === "OPENAI_API_KEY") {
@@ -561,8 +566,8 @@ export async function runOnboarding(): Promise<void> {
 	process.stderr.write(`  ${green(symbols.check)} Agent:  ${bold(chosenAgent)}\n`);
 	process.stderr.write(`  ${green(symbols.check)} Model:  ${bold(chosenModel)}\n`);
 
-	const keyNames = [...apiKeys.keys()].map(k => {
-		const p = PROVIDERS.find(pr => pr.envVar === k);
+	const keyNames = [...apiKeys.keys()].map((k) => {
+		const p = PROVIDERS.find((pr) => pr.envVar === k);
 		return p?.name ?? k;
 	});
 	if (keyNames.length > 0) {
@@ -570,8 +575,10 @@ export async function runOnboarding(): Promise<void> {
 	}
 
 	process.stderr.write(`  ${green(symbols.check)} Config: ${dim("~/.swarm/config.yaml")}\n`);
-	process.stderr.write(`\n  ${dim("Run")} ${yellow("swarm --dir ./project \"your task\"")} ${dim("to get started.")}\n`);
-	process.stderr.write(`  ${dim("Edit")} ${cyan("~/.swarm/config.yaml")} ${dim("to change these settings anytime.")}\n`);
+	process.stderr.write(`\n  ${dim("Run")} ${yellow('swarm --dir ./project "your task"')} ${dim("to get started.")}\n`);
+	process.stderr.write(
+		`  ${dim("Edit")} ${cyan("~/.swarm/config.yaml")} ${dim("to change these settings anytime.")}\n`,
+	);
 
 	// If still missing critical deps, show warnings
 	if (!gitVer) {
@@ -579,7 +586,9 @@ export async function runOnboarding(): Promise<void> {
 	}
 	if (apiKeys.size === 0) {
 		process.stderr.write(`\n  ${yellow(symbols.warn)} ${bold("No API keys configured.")}\n`);
-		process.stderr.write(`  ${dim("Add keys to")} ${cyan("~/.swarm/credentials")} ${dim("or")} ${cyan(".env")}${dim(":")}\n`);
+		process.stderr.write(
+			`  ${dim("Add keys to")} ${cyan("~/.swarm/credentials")} ${dim("or")} ${cyan(".env")}${dim(":")}\n`,
+		);
 		process.stderr.write(`    ${dim("ANTHROPIC_API_KEY=sk-ant-...")}\n`);
 		process.stderr.write(`    ${dim("OPENAI_API_KEY=sk-...")}\n`);
 		process.stderr.write(`    ${dim("GEMINI_API_KEY=AI...")}\n`);

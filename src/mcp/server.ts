@@ -18,8 +18,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { registerTools, killActiveSubprocesses } from "./tools.js";
 import { cleanupAllSessions } from "./session.js";
+import { killActiveSubprocesses, registerTools } from "./tools.js";
 
 // ── Logging ────────────────────────────────────────────────────────────────
 

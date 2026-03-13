@@ -9,18 +9,37 @@ import { coral, dim, isTTY, stripAnsi, termWidth } from "./theme.js";
 
 /** Playful verbs shown while the spinner is active. */
 const VERBS = [
-	"Orchestrating", "Decomposing", "Analyzing", "Spawning",
-	"Synthesizing", "Weaving", "Parallelizing", "Routing",
-	"Compressing", "Dispatching", "Coordinating", "Assembling",
-	"Evaluating", "Distributing", "Reasoning", "Merging",
-	"Refactoring", "Scanning", "Computing", "Resolving",
-	"Strategizing", "Threading", "Optimizing", "Composing",
-	"Investigating", "Constructing", "Iterating", "Transforming",
+	"Orchestrating",
+	"Decomposing",
+	"Analyzing",
+	"Spawning",
+	"Synthesizing",
+	"Weaving",
+	"Parallelizing",
+	"Routing",
+	"Compressing",
+	"Dispatching",
+	"Coordinating",
+	"Assembling",
+	"Evaluating",
+	"Distributing",
+	"Reasoning",
+	"Merging",
+	"Refactoring",
+	"Scanning",
+	"Computing",
+	"Resolving",
+	"Strategizing",
+	"Threading",
+	"Optimizing",
+	"Composing",
+	"Investigating",
+	"Constructing",
+	"Iterating",
+	"Transforming",
 ];
 
-const SPINNER_CHARS = isTTY
-	? ["\u00B7", "\u2726", "\u2733", "\u2736", "\u273B", "\u273D"]
-	: ["*"];
+const SPINNER_CHARS = isTTY ? ["\u00B7", "\u2726", "\u2733", "\u2736", "\u273B", "\u273D"] : ["*"];
 
 export class Spinner {
 	private static _exitHandlerRegistered = false;

@@ -31,7 +31,9 @@ async function abortMergeSafe(repoRoot: string): Promise<void> {
 	} catch {
 		try {
 			await git(["reset", "--hard", "HEAD"], repoRoot);
-		} catch { /* last resort failed — repo may be in bad state */ }
+		} catch {
+			/* last resort failed — repo may be in bad state */
+		}
 	}
 }
 
@@ -39,16 +41,9 @@ async function abortMergeSafe(repoRoot: string): Promise<void> {
  * Merge a single thread branch into the current branch.
  * On conflict, captures the conflicted file list and diff hunks before aborting.
  */
-export async function mergeThreadBranch(
-	repoRoot: string,
-	branchName: string,
-	threadId: string,
-): Promise<MergeResult> {
+export async function mergeThreadBranch(repoRoot: string, branchName: string, threadId: string): Promise<MergeResult> {
 	try {
-		const { stdout } = await git(
-			["merge", "--no-ff", "-m", `swarm: merge thread ${threadId}`, branchName],
-			repoRoot,
-		);
+		const { stdout } = await git(["merge", "--no-ff", "-m", `swarm: merge thread ${threadId}`, branchName], repoRoot);
 
 		return {
 			success: true,
@@ -64,10 +59,7 @@ export async function mergeThreadBranch(
 		if (errMsg.includes("CONFLICT") || errMsg.includes("Merge conflict")) {
 			try {
 				// Get list of conflicted files
-				const { stdout: conflicted } = await git(
-					["diff", "--name-only", "--diff-filter=U"],
-					repoRoot,
-				);
+				const { stdout: conflicted } = await git(["diff", "--name-only", "--diff-filter=U"], repoRoot);
 				const conflicts = conflicted.trim().split("\n").filter(Boolean);
 
 				// Capture the conflict diff (shows <<<<<<< markers)
@@ -134,9 +126,7 @@ export async function mergeAllThreads(
 	const results: MergeResult[] = [];
 
 	// Filter to completed+successful threads with branches
-	const eligible = threads.filter(
-		(t) => t.status === "completed" && t.branchName && t.result?.success,
-	);
+	const eligible = threads.filter((t) => t.status === "completed" && t.branchName && t.result?.success);
 
 	// Apply ordering if specified
 	let ordered: ThreadState[];
@@ -149,9 +139,7 @@ export async function mergeAllThreads(
 		});
 	} else {
 		// Default: merge in completion order (earliest first)
-		ordered = [...eligible].sort(
-			(a, b) => (a.completedAt || 0) - (b.completedAt || 0),
-		);
+		ordered = [...eligible].sort((a, b) => (a.completedAt || 0) - (b.completedAt || 0));
 	}
 
 	for (const thread of ordered) {

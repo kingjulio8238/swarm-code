@@ -2,17 +2,17 @@
  * Tests for real budget tracking with token counts.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // Register mock agent (reports usage: 1500 input, 800 output)
 import "../src/agents/mock.js";
 
-import { ThreadManager } from "../src/threads/manager.js";
 import { loadConfig } from "../src/config.js";
+import { ThreadManager } from "../src/threads/manager.js";
 
 function createTempRepo(): string {
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "swarm-budget-test-"));
@@ -27,9 +27,15 @@ function createTempRepo(): string {
 
 function cleanupRepo(dir: string): void {
 	try {
-		try { execFileSync("git", ["worktree", "prune"], { cwd: dir }); } catch { /* ok */ }
+		try {
+			execFileSync("git", ["worktree", "prune"], { cwd: dir });
+		} catch {
+			/* ok */
+		}
 		fs.rmSync(dir, { recursive: true, force: true });
-	} catch { /* best effort */ }
+	} catch {
+		/* best effort */
+	}
 }
 
 function getTestConfig() {

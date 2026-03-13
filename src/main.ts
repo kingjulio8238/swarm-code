@@ -13,10 +13,7 @@
  *   swarm                        → interactive terminal (RLM mode, default)
  */
 
-import {
-	bold, coral, cyan, dim, yellow,
-	isTTY, symbols, termWidth,
-} from "./ui/theme.js";
+import { bold, coral, cyan, dim, isTTY, symbols, termWidth, yellow } from "./ui/theme.js";
 
 export function buildHelp(): string {
 	const w = Math.max(Math.min(termWidth(), 60), 24);
@@ -31,8 +28,12 @@ export function buildHelp(): string {
 		lines.push("");
 		lines.push(`  ${cyan(`${symbols.topLeft}${l}`)}${bold(coral(title))}${dim(sub)}${cyan(`${r}${symbols.topRight}`)}`);
 		lines.push(`  ${cyan(symbols.vertLine)}${" ".repeat(w - 2)}${cyan(symbols.vertLine)}`);
-		lines.push(`  ${cyan(symbols.vertLine)}  ${dim("Open-source orchestrator for parallel coding agents")}${" ".repeat(Math.max(0, w - 55))}${cyan(symbols.vertLine)}`);
-		lines.push(`  ${cyan(symbols.vertLine)}  ${dim("Built on RLM (arXiv:2512.24601)")}${" ".repeat(Math.max(0, w - 36))}${cyan(symbols.vertLine)}`);
+		lines.push(
+			`  ${cyan(symbols.vertLine)}  ${dim("Open-source orchestrator for parallel coding agents")}${" ".repeat(Math.max(0, w - 55))}${cyan(symbols.vertLine)}`,
+		);
+		lines.push(
+			`  ${cyan(symbols.vertLine)}  ${dim("Built on RLM (arXiv:2512.24601)")}${" ".repeat(Math.max(0, w - 36))}${cyan(symbols.vertLine)}`,
+		);
 		lines.push(`  ${cyan(symbols.vertLine)}${" ".repeat(w - 2)}${cyan(symbols.vertLine)}`);
 		lines.push(`  ${cyan(symbols.bottomLeft)}${cyan(symbols.horizontal.repeat(w - 2))}${cyan(symbols.bottomRight)}`);
 	} else {
@@ -104,9 +105,7 @@ function getHelp(): string {
  * Skips known flags that take a value argument.
  */
 function hasPositionalArgs(args: string[]): boolean {
-	const flagsWithValue = new Set([
-		"--dir", "--orchestrator", "--agent", "--max-budget", "--model", "--file", "--url",
-	]);
+	const flagsWithValue = new Set(["--dir", "--orchestrator", "--agent", "--max-budget", "--model", "--file", "--url"]);
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg.startsWith("--") || arg === "-q" || arg === "-h") {

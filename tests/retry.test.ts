@@ -2,17 +2,17 @@
  * Tests for error recovery, retry with backoff, and agent re-routing.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // Register mock agent
 import "../src/agents/mock.js";
 
-import { ThreadManager } from "../src/threads/manager.js";
 import { loadConfig } from "../src/config.js";
+import { ThreadManager } from "../src/threads/manager.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -29,9 +29,15 @@ function createTempRepo(): string {
 
 function cleanupRepo(dir: string): void {
 	try {
-		try { execFileSync("git", ["worktree", "prune"], { cwd: dir }); } catch { /* ok */ }
+		try {
+			execFileSync("git", ["worktree", "prune"], { cwd: dir });
+		} catch {
+			/* ok */
+		}
 		fs.rmSync(dir, { recursive: true, force: true });
-	} catch { /* best effort */ }
+	} catch {
+		/* best effort */
+	}
 }
 
 function getTestConfig() {
@@ -85,7 +91,7 @@ describe("Retry with Backoff", () => {
 		const config = getTestConfig();
 		config.thread_retries = 2; // 3 total attempts
 		const progressLog: string[] = [];
-		const tm = new ThreadManager(repoDir, config, (id, phase, detail) => {
+		const tm = new ThreadManager(repoDir, config, (_id, phase, detail) => {
 			progressLog.push(`${phase}${detail ? `:${detail}` : ""}`);
 		});
 		await tm.init();
@@ -103,7 +109,7 @@ describe("Retry with Backoff", () => {
 		expect(state?.attempt).toBe(3); // All 3 attempts used
 
 		// Progress should show retrying phases
-		const retryingEntries = progressLog.filter(p => p.startsWith("retrying"));
+		const retryingEntries = progressLog.filter((p) => p.startsWith("retrying"));
 		expect(retryingEntries.length).toBeGreaterThan(0);
 
 		await tm.cleanup();
@@ -167,7 +173,7 @@ describe("Agent Re-routing on Failure", () => {
 		const config = getTestConfig();
 		config.thread_retries = 1;
 		const progressLog: string[] = [];
-		const tm = new ThreadManager(repoDir, config, (id, phase, detail) => {
+		const tm = new ThreadManager(repoDir, config, (_id, phase, detail) => {
 			progressLog.push(`${phase}:${detail || ""}`);
 		});
 		await tm.init();
@@ -180,7 +186,7 @@ describe("Agent Re-routing on Failure", () => {
 		});
 
 		// Should show re-routing attempt in progress
-		const rerouteEntries = progressLog.filter(p => p.includes("re-routing") || p.includes("retrying"));
+		const rerouteEntries = progressLog.filter((p) => p.includes("re-routing") || p.includes("retrying"));
 		expect(rerouteEntries.length).toBeGreaterThan(0);
 
 		await tm.cleanup();

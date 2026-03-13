@@ -6,11 +6,8 @@
  * Uses in-place terminal updates for a live-updating display.
  */
 
-import {
-	bold, cyan, dim, green, red, yellow, gray, coral,
-	isTTY, symbols, truncate, pad, stripAnsi, termWidth,
-} from "./theme.js";
-import { isJsonMode, getLogLevel } from "./log.js";
+import { getLogLevel, isJsonMode } from "./log.js";
+import { coral, cyan, dim, green, isTTY, red, stripAnsi, symbols, termWidth, truncate, yellow } from "./theme.js";
 
 interface ThreadStatus {
 	id: string;
@@ -38,12 +35,17 @@ export class ThreadDashboard {
 	}
 
 	/** Update a thread's status. */
-	update(id: string, phase: string, detail?: string, extra?: {
-		task?: string;
-		agent?: string;
-		model?: string;
-		filesChanged?: number;
-	}): void {
+	update(
+		id: string,
+		phase: string,
+		detail?: string,
+		extra?: {
+			task?: string;
+			agent?: string;
+			model?: string;
+			filesChanged?: number;
+		},
+	): void {
 		const existing = this.threads.get(id);
 		if (existing) {
 			existing.phase = phase;
@@ -105,7 +107,7 @@ export class ThreadDashboard {
 		}
 
 		// Write new lines
-		process.stderr.write(lines.join("\n") + "\n");
+		process.stderr.write(`${lines.join("\n")}\n`);
 		this.lastLineCount = lines.length;
 	}
 
@@ -152,16 +154,26 @@ export class ThreadDashboard {
 
 	private formatPhase(phase: string): string {
 		switch (phase) {
-			case "queued": return dim("queued");
-			case "creating_worktree": return cyan("creating worktree");
-			case "agent_running": return coral("running agent");
-			case "capturing_diff": return cyan("capturing diff");
-			case "compressing": return dim("compressing");
-			case "completed": return green(symbols.check + " completed");
-			case "failed": return red(symbols.cross + " failed");
-			case "cancelled": return yellow("cancelled");
-			case "retrying": return yellow("retrying");
-			default: return dim(phase);
+			case "queued":
+				return dim("queued");
+			case "creating_worktree":
+				return cyan("creating worktree");
+			case "agent_running":
+				return coral("running agent");
+			case "capturing_diff":
+				return cyan("capturing diff");
+			case "compressing":
+				return dim("compressing");
+			case "completed":
+				return green(`${symbols.check} completed`);
+			case "failed":
+				return red(`${symbols.cross} failed`);
+			case "cancelled":
+				return yellow("cancelled");
+			case "retrying":
+				return yellow("retrying");
+			default:
+				return dim(phase);
 		}
 	}
 }

@@ -15,9 +15,9 @@
  * task similarity hash (trigram-based).
  */
 
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createHash } from "node:crypto";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -87,14 +87,77 @@ export interface AggregateStats {
 
 /** Stop words to filter from task keywords. */
 const STOP_WORDS = new Set([
-	"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-	"have", "has", "had", "do", "does", "did", "will", "would", "could",
-	"should", "may", "might", "shall", "can", "to", "of", "in", "for",
-	"on", "with", "at", "by", "from", "as", "into", "through", "during",
-	"before", "after", "above", "below", "between", "and", "but", "or",
-	"not", "no", "all", "each", "every", "both", "few", "more", "most",
-	"other", "some", "such", "than", "too", "very", "just", "about",
-	"this", "that", "these", "those", "it", "its", "my", "your", "our",
+	"the",
+	"a",
+	"an",
+	"is",
+	"are",
+	"was",
+	"were",
+	"be",
+	"been",
+	"being",
+	"have",
+	"has",
+	"had",
+	"do",
+	"does",
+	"did",
+	"will",
+	"would",
+	"could",
+	"should",
+	"may",
+	"might",
+	"shall",
+	"can",
+	"to",
+	"of",
+	"in",
+	"for",
+	"on",
+	"with",
+	"at",
+	"by",
+	"from",
+	"as",
+	"into",
+	"through",
+	"during",
+	"before",
+	"after",
+	"above",
+	"below",
+	"between",
+	"and",
+	"but",
+	"or",
+	"not",
+	"no",
+	"all",
+	"each",
+	"every",
+	"both",
+	"few",
+	"more",
+	"most",
+	"other",
+	"some",
+	"such",
+	"than",
+	"too",
+	"very",
+	"just",
+	"about",
+	"this",
+	"that",
+	"these",
+	"those",
+	"it",
+	"its",
+	"my",
+	"your",
+	"our",
 ]);
 
 /** Extract normalized keywords from a task string. */
@@ -103,7 +166,7 @@ function extractKeywords(task: string): string[] {
 		.toLowerCase()
 		.replace(/[^a-z0-9\s-_./]/g, " ")
 		.split(/\s+/)
-		.filter(w => w.length > 2 && !STOP_WORDS.has(w))
+		.filter((w) => w.length > 2 && !STOP_WORDS.has(w))
 		.sort();
 }
 
@@ -130,10 +193,7 @@ function trigramSimilarity(a: Set<string>, b: Set<string>): number {
 
 /** Generate a deterministic episode ID. */
 function episodeId(task: string, timestamp: number): string {
-	return createHash("sha256")
-		.update(`${task}:${timestamp}`)
-		.digest("hex")
-		.slice(0, 16);
+	return createHash("sha256").update(`${task}:${timestamp}`).digest("hex").slice(0, 16);
 }
 
 // ── Episodic Memory Store ──────────────────────────────────────────────────
@@ -246,9 +306,7 @@ export class EpisodicMemory {
 			}
 		}
 
-		return scored
-			.sort((a, b) => b.similarity - a.similarity)
-			.slice(0, maxResults);
+		return scored.sort((a, b) => b.similarity - a.similarity).slice(0, maxResults);
 	}
 
 	/**
@@ -266,8 +324,8 @@ export class EpisodicMemory {
 			const duration = (episode.durationMs / 1000).toFixed(1);
 			lines.push(
 				`  - [${sim}% match] "${episode.task.slice(0, 80)}" → ` +
-				`${episode.agent}/${episode.model} (${episode.slot}, ${duration}s, $${cost}, ` +
-				`${episode.filesChangedCount} files)`,
+					`${episode.agent}/${episode.model} (${episode.slot}, ${duration}s, $${cost}, ` +
+					`${episode.filesChangedCount} files)`,
 			);
 		}
 
@@ -354,10 +412,7 @@ export class EpisodicMemory {
 
 			// Slot counts
 			if (episode.slot) {
-				stats.slotCounts.set(
-					episode.slot,
-					(stats.slotCounts.get(episode.slot) || 0) + 1,
-				);
+				stats.slotCounts.set(episode.slot, (stats.slotCounts.get(episode.slot) || 0) + 1);
 			}
 
 			// Extract file extensions from changed files
@@ -401,7 +456,7 @@ export class EpisodicMemory {
 
 		let files: string[];
 		try {
-			files = fs.readdirSync(this.memoryDir).filter(f => f.endsWith(".json"));
+			files = fs.readdirSync(this.memoryDir).filter((f) => f.endsWith(".json"));
 		} catch {
 			return;
 		}

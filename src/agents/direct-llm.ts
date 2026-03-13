@@ -5,7 +5,7 @@
  * without any coding agent wrapper. Useful for lightweight analysis tasks.
  */
 
-import type { AgentProvider, AgentRunOptions, AgentResult } from "../core/types.js";
+import type { AgentProvider, AgentResult, AgentRunOptions } from "../core/types.js";
 import { registerAgent } from "./provider.js";
 
 const directLlmProvider: AgentProvider = {
@@ -13,11 +13,7 @@ const directLlmProvider: AgentProvider = {
 
 	async isAvailable(): Promise<boolean> {
 		// Available if any LLM API key is set
-		return !!(
-			process.env.ANTHROPIC_API_KEY ||
-			process.env.OPENAI_API_KEY ||
-			process.env.GEMINI_API_KEY
-		);
+		return !!(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY);
 	},
 
 	async run(options: AgentRunOptions): Promise<AgentResult> {
@@ -53,11 +49,13 @@ const directLlmProvider: AgentProvider = {
 
 			const response = await completeSimple(model, {
 				systemPrompt: "You are a helpful assistant. Be concise and thorough.",
-				messages: [{
-					role: "user" as const,
-					content: options.task,
-					timestamp: Date.now(),
-				}],
+				messages: [
+					{
+						role: "user" as const,
+						content: options.task,
+						timestamp: Date.now(),
+					},
+				],
 			});
 
 			const output = response.content

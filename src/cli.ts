@@ -26,7 +26,8 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 // ── Arg parsing ─────────────────────────────────────────────────────────────
 
 function usage(): never {
-	console.error(`
+	console.error(
+		`
 swarm run — Recursive Language Model CLI (arXiv:2512.24601)
 
 USAGE
@@ -43,7 +44,8 @@ EXAMPLES
   rlm run --file big.txt "List all classes"
   curl -s https://example.com/large.py | rlm run --stdin "Summarize"
   rlm run --url https://raw.githubusercontent.com/.../typing.py "Count public classes"
-`.trim());
+`.trim(),
+	);
 	process.exit(1);
 }
 
@@ -133,11 +135,15 @@ async function fetchUrl(url: string): Promise<string> {
 	}
 	const contentLength = resp.headers.get("content-length");
 	if (contentLength && parseInt(contentLength, 10) > MAX_RESPONSE_BYTES) {
-		throw new Error(`Response too large (${(parseInt(contentLength, 10) / 1024 / 1024).toFixed(1)}MB). Limit is ${MAX_RESPONSE_BYTES / 1024 / 1024}MB.`);
+		throw new Error(
+			`Response too large (${(parseInt(contentLength, 10) / 1024 / 1024).toFixed(1)}MB). Limit is ${MAX_RESPONSE_BYTES / 1024 / 1024}MB.`,
+		);
 	}
 	const text = await resp.text();
 	if (text.length > MAX_RESPONSE_BYTES) {
-		throw new Error(`Response too large (${(text.length / 1024 / 1024).toFixed(1)}MB). Limit is ${MAX_RESPONSE_BYTES / 1024 / 1024}MB.`);
+		throw new Error(
+			`Response too large (${(text.length / 1024 / 1024).toFixed(1)}MB). Limit is ${MAX_RESPONSE_BYTES / 1024 / 1024}MB.`,
+		);
 	}
 	return text;
 }
@@ -149,18 +155,20 @@ async function main(): Promise<void> {
 
 	// Provider → env var mapping
 	const providerKeys: Record<string, string> = {
-		anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY",
+		anthropic: "ANTHROPIC_API_KEY",
+		openai: "OPENAI_API_KEY",
 		google: "GEMINI_API_KEY",
 	};
 	const defaultModels: Record<string, string> = {
-		anthropic: "claude-sonnet-4-6", openai: "gpt-4o",
+		anthropic: "claude-sonnet-4-6",
+		openai: "gpt-4o",
 		google: "gemini-2.5-flash",
 	};
 
 	// Resolve model — ensure provider has an API key
 	// Prioritise well-known providers so e.g. "gpt-4o" picks "openai" not "azure-openai-responses"
 	let model: Model<Api> | undefined;
-	let resolvedProvider = "";
+	let _resolvedProvider = "";
 	const allModelIds: string[] = [];
 	const knownProviders = new Set(Object.keys(providerKeys));
 
@@ -173,7 +181,7 @@ async function main(): Promise<void> {
 				const key = providerKeys[provider]!;
 				if (process.env[key]) {
 					model = m;
-					resolvedProvider = provider;
+					_resolvedProvider = provider;
 				}
 			}
 		}
@@ -187,7 +195,7 @@ async function main(): Promise<void> {
 					const key = `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
 					if (process.env[key]) {
 						model = m;
-						resolvedProvider = provider;
+						_resolvedProvider = provider;
 						break;
 					}
 				}
@@ -207,7 +215,7 @@ async function main(): Promise<void> {
 				for (const m of getModels(p)) {
 					if (m.id === fallbackId) {
 						model = m;
-						resolvedProvider = prov;
+						_resolvedProvider = prov;
 						args.modelId = fallbackId;
 						console.error(`Note: using ${fallbackId} (${prov}) — set RLM_MODEL to override`);
 						break;
@@ -231,7 +239,9 @@ async function main(): Promise<void> {
 		try {
 			const stat = fs.statSync(args.file);
 			if (stat.isDirectory()) {
-				console.error(`Error: "${args.file}" is a directory. Use the interactive mode (\`rlm\`) for directory loading.`);
+				console.error(
+					`Error: "${args.file}" is a directory. Use the interactive mode (\`rlm\`) for directory loading.`,
+				);
 				process.exit(1);
 			}
 		} catch (err: any) {

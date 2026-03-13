@@ -5,8 +5,7 @@
  * Tests input validation, error handling, and JSON formatting.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { CompressedResult, ThreadState, BudgetState, MergeResult } from "../../src/core/types.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mock session module ─────────────────────────────────────────────────────
 
@@ -32,12 +31,12 @@ const mockSession = {
 
 vi.mock("../../src/mcp/session.js", () => ({
 	getSession: vi.fn(async (dir: string) => {
-		if (dir.includes("nonexistent")) throw new Error("Directory does not exist: " + dir);
+		if (dir.includes("nonexistent")) throw new Error(`Directory does not exist: ${dir}`);
 		return mockSession;
 	}),
 	spawnThread: vi.fn(async (_session: unknown, params: { task: string }) => ({
 		success: true,
-		summary: "Done: " + params.task,
+		summary: `Done: ${params.task}`,
 		filesChanged: ["hello.ts"],
 		diffStats: "1 file changed",
 		durationMs: 100,
@@ -77,7 +76,7 @@ const mockServer = {
 
 // ── Import + register ───────────────────────────────────────────────────────
 
-import { registerTools, killActiveSubprocesses } from "../../src/mcp/tools.js";
+import { killActiveSubprocesses, registerTools } from "../../src/mcp/tools.js";
 
 beforeEach(() => {
 	registeredTools.clear();

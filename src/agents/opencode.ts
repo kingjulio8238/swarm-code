@@ -13,10 +13,10 @@
  * lazily and shutting them down when the session ends.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
-import * as os from "node:os";
+import { type ChildProcess, spawn } from "node:child_process";
 import * as http from "node:http";
-import type { AgentProvider, AgentRunOptions, AgentResult } from "../core/types.js";
+import * as os from "node:os";
+import type { AgentProvider, AgentResult, AgentRunOptions } from "../core/types.js";
 import { registerAgent } from "./provider.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -58,7 +58,9 @@ interface OpenCodeJsonOutput {
 function extractJson(raw: string): OpenCodeJsonOutput | null {
 	try {
 		return JSON.parse(raw) as OpenCodeJsonOutput;
-	} catch { /* mixed output — try extraction */ }
+	} catch {
+		/* mixed output — try extraction */
+	}
 
 	const firstBrace = raw.indexOf("{");
 	const lastBrace = raw.lastIndexOf("}");
@@ -115,7 +117,7 @@ function extractFromParsed(parsed: OpenCodeJsonOutput): {
 			usage = {
 				inputTokens,
 				outputTokens,
-				totalTokens: u.total_tokens || (inputTokens + outputTokens),
+				totalTokens: u.total_tokens || inputTokens + outputTokens,
 			};
 		}
 	}
@@ -282,7 +284,9 @@ class OpenCodeServerPool {
 		return new Promise((resolve) => {
 			const req = http.get(`${baseUrl}/global/health`, { timeout: 2000 }, (res) => {
 				let body = "";
-				res.on("data", (d) => { body += d; });
+				res.on("data", (d) => {
+					body += d;
+				});
 				res.on("end", () => {
 					try {
 						const data = JSON.parse(body);
@@ -293,7 +297,10 @@ class OpenCodeServerPool {
 				});
 			});
 			req.on("error", () => resolve(false));
-			req.on("timeout", () => { req.destroy(); resolve(false); });
+			req.on("timeout", () => {
+				req.destroy();
+				resolve(false);
+			});
 		});
 	}
 
@@ -301,9 +308,15 @@ class OpenCodeServerPool {
 		try {
 			server.process.kill("SIGTERM");
 			setTimeout(() => {
-				try { if (server.process.exitCode === null) server.process.kill("SIGKILL"); } catch { /* ok */ }
+				try {
+					if (server.process.exitCode === null) server.process.kill("SIGKILL");
+				} catch {
+					/* ok */
+				}
 			}, 3000);
-		} catch { /* already dead */ }
+		} catch {
+			/* already dead */
+		}
 		this.servers.delete(server.cwd);
 	}
 
@@ -335,7 +348,12 @@ async function runViaHttpApi(
 	task: string,
 	model?: string,
 	signal?: AbortSignal,
-): Promise<{ output: string; filesChanged: string[]; sessionId?: string; usage?: import("../core/types.js").TokenUsage } | null> {
+): Promise<{
+	output: string;
+	filesChanged: string[];
+	sessionId?: string;
+	usage?: import("../core/types.js").TokenUsage;
+} | null> {
 	try {
 		// 1. Create session
 		const sessionRes = await httpPost(`${serverUrl}/session`, {});
@@ -379,7 +397,9 @@ async function runViaHttpApi(
 
 		// Extract token usage from response (may be in usage, total_usage, or info.usage)
 		let usage: import("../core/types.js").TokenUsage | undefined;
-		const u = (msgRes.usage ?? msgRes.total_usage ?? (info as Record<string, unknown> | undefined)?.usage) as Record<string, number | undefined> | undefined;
+		const u = (msgRes.usage ?? msgRes.total_usage ?? (info as Record<string, unknown> | undefined)?.usage) as
+			| Record<string, number | undefined>
+			| undefined;
 		if (u) {
 			const inputTokens = u.input_tokens ?? u.prompt_tokens ?? 0;
 			const outputTokens = u.output_tokens ?? u.completion_tokens ?? 0;
@@ -387,7 +407,7 @@ async function runViaHttpApi(
 				usage = {
 					inputTokens,
 					outputTokens,
-					totalTokens: u.total_tokens ?? (inputTokens + outputTokens),
+					totalTokens: u.total_tokens ?? inputTokens + outputTokens,
 				};
 			}
 		}
@@ -398,45 +418,61 @@ async function runViaHttpApi(
 	}
 }
 
-function httpPost(url: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
+function httpPost(
+	url: string,
+	body: Record<string, unknown>,
+	signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
 	return new Promise((resolve) => {
 		const data = JSON.stringify(body);
 		const parsed = new URL(url);
 
-		const req = http.request({
-			hostname: parsed.hostname,
-			port: parsed.port,
-			path: parsed.pathname,
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"Content-Length": Buffer.byteLength(data),
+		const req = http.request(
+			{
+				hostname: parsed.hostname,
+				port: parsed.port,
+				path: parsed.pathname,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"Content-Length": Buffer.byteLength(data),
+				},
+				timeout: 300000, // 5 min for long tasks
 			},
-			timeout: 300000, // 5 min for long tasks
-		}, (res) => {
-			let responseBody = "";
-			res.on("data", (d) => { responseBody += d; });
-			res.on("end", () => {
-				// Reject non-2xx status codes
-				const status = res.statusCode ?? 0;
-				if (status < 200 || status >= 300) {
-					resolve(null);
-					return;
-				}
-				try {
-					resolve(JSON.parse(responseBody));
-				} catch {
-					resolve(null);
-				}
-			});
-		});
+			(res) => {
+				let responseBody = "";
+				res.on("data", (d) => {
+					responseBody += d;
+				});
+				res.on("end", () => {
+					// Reject non-2xx status codes
+					const status = res.statusCode ?? 0;
+					if (status < 200 || status >= 300) {
+						resolve(null);
+						return;
+					}
+					try {
+						resolve(JSON.parse(responseBody));
+					} catch {
+						resolve(null);
+					}
+				});
+			},
+		);
 
 		req.on("error", () => resolve(null));
-		req.on("timeout", () => { req.destroy(); resolve(null); });
+		req.on("timeout", () => {
+			req.destroy();
+			resolve(null);
+		});
 
 		if (signal) {
 			const onAbort = () => req.destroy();
-			if (signal.aborted) { req.destroy(); resolve(null); return; }
+			if (signal.aborted) {
+				req.destroy();
+				resolve(null);
+				return;
+			}
 			signal.addEventListener("abort", onAbort, { once: true });
 			req.on("close", () => signal.removeEventListener("abort", onAbort));
 		}
@@ -528,7 +564,11 @@ function runSubprocess(
 			const onAbort = () => {
 				proc.kill("SIGTERM");
 				const killTimer = setTimeout(() => {
-					try { if (proc.exitCode === null) proc.kill("SIGKILL"); } catch { /* dead */ }
+					try {
+						if (proc.exitCode === null) proc.kill("SIGKILL");
+					} catch {
+						/* dead */
+					}
 				}, 3000);
 				proc.on("exit", () => clearTimeout(killTimer));
 			};

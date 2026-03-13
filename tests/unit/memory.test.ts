@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import { EpisodicMemory, type Episode } from "../../src/memory/episodic.js";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EpisodicMemory } from "../../src/memory/episodic.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -130,9 +130,7 @@ describe("EpisodicMemory", () => {
 			const mem = new EpisodicMemory(tmpDir);
 			await mem.init();
 
-			const ep = await mem.record(
-				makeEpisodeParams({ task: "Fix the broken CSS layout in dashboard" }),
-			);
+			const ep = await mem.record(makeEpisodeParams({ task: "Fix the broken CSS layout in dashboard" }));
 			// "the" and "in" are stop words; "fix" is 3 chars and kept; "broken", "css", "layout", "dashboard" kept
 			expect(ep.taskKeywords).toBeInstanceOf(Array);
 			expect(ep.taskKeywords.length).toBeGreaterThan(0);
@@ -198,9 +196,7 @@ describe("EpisodicMemory", () => {
 
 			// Record several similar episodes
 			for (let i = 0; i < 10; i++) {
-				await mem.record(
-					makeEpisodeParams({ task: `refactor auth module part ${i}` }),
-				);
+				await mem.record(makeEpisodeParams({ task: `refactor auth module part ${i}` }));
 			}
 
 			const results = mem.recall("refactor auth module", 3, 0.05);
@@ -445,9 +441,7 @@ describe("EpisodicMemory", () => {
 			const mem = new EpisodicMemory(tmpDir);
 			await mem.init();
 
-			await mem.record(
-				makeEpisodeParams({ task: "deploy kubernetes infrastructure cluster" }),
-			);
+			await mem.record(makeEpisodeParams({ task: "deploy kubernetes infrastructure cluster" }));
 
 			// getStrategyHints uses minSimilarity=0.2, so a totally different task should miss
 			const hints = mem.getStrategyHints("fix broken CSS gradient in mobile header");
@@ -499,7 +493,7 @@ describe("EpisodicMemory", () => {
 			const ep4 = await mem.record(makeEpisodeParams({ task: "fourth task ever" }));
 			expect(mem.size).toBe(3);
 
-			const allIds = mem.getAll().map(e => e.id);
+			const allIds = mem.getAll().map((e) => e.id);
 			expect(allIds).not.toContain(ep1.id);
 			expect(allIds).toContain(ep2.id);
 			expect(allIds).toContain(ep3.id);
@@ -547,7 +541,7 @@ describe("EpisodicMemory", () => {
 
 			expect(mem2.size).toBe(2);
 			const all = mem2.getAll();
-			const tasks = all.map(e => e.task);
+			const tasks = all.map((e) => e.task);
 			expect(tasks).toContain("persistent task alpha");
 			expect(tasks).toContain("persistent task beta");
 		});
@@ -645,9 +639,7 @@ describe("EpisodicMemory", () => {
 			const mem = new EpisodicMemory(tmpDir);
 			await mem.init();
 
-			const ep = await mem.record(
-				makeEpisodeParams({ task: "go to my DB and fix it up" }),
-			);
+			const ep = await mem.record(makeEpisodeParams({ task: "go to my DB and fix it up" }));
 			// "go", "to", "my", "DB", "it", "up" are all 2 chars — should be filtered
 			// "and" is a stop word, "fix" is 3 chars and kept
 			expect(ep.taskKeywords).not.toContain("go");

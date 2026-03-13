@@ -2,13 +2,13 @@
  * Shared test utilities for swarm-cli tests.
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { execFileSync } from "node:child_process";
-import type { CompressedResult, ThreadState, ThreadConfig, BudgetState } from "../../src/core/types.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { SwarmConfig } from "../../src/config.js";
 import { loadConfig } from "../../src/config.js";
+import type { BudgetState, CompressedResult, ThreadConfig, ThreadState } from "../../src/core/types.js";
 
 /**
  * Create a temporary git repository with an initial commit.
@@ -31,9 +31,15 @@ export function createTempGitRepo(name: string = "swarm-test"): string {
  */
 export function cleanupTempRepo(dir: string): void {
 	try {
-		try { execFileSync("git", ["worktree", "prune"], { cwd: dir }); } catch { /* ok */ }
+		try {
+			execFileSync("git", ["worktree", "prune"], { cwd: dir });
+		} catch {
+			/* ok */
+		}
 		fs.rmSync(dir, { recursive: true, force: true });
-	} catch { /* best effort */ }
+	} catch {
+		/* best effort */
+	}
 }
 
 /**

@@ -2,7 +2,7 @@
  * Tests for CLI help output — buildHelp() from main.ts.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { buildHelp } from "../../src/main.js";
 
 // ── Tests ────────────────────────────────────────────────────────────────────

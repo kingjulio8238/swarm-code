@@ -132,7 +132,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
 	// OpenAI
 	"gpt-4o": { input: 2.5, output: 10 },
 	"gpt-4o-mini": { input: 0.15, output: 0.6 },
-	"o3": { input: 10, output: 40 },
+	o3: { input: 10, output: 40 },
 	"o3-mini": { input: 1.1, output: 4.4 },
 	// Google
 	"gemini-2.5-pro": { input: 1.25, output: 10 },
@@ -143,7 +143,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
 
 // Re-export from config.ts to avoid circular imports — consumers can import
 // SwarmConfig from either location.
-export type { SwarmConfig, ModelSlots } from "../config.js";
+export type { ModelSlots, SwarmConfig } from "../config.js";
 
 // ── Protocol messages (Python <-> TS) ───────────────────────────────────────
 

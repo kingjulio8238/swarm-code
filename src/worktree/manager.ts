@@ -138,7 +138,8 @@ export class WorktreeManager {
 				return info;
 			} catch (err) {
 				lastErr = err instanceof Error ? err : new Error(String(err));
-				const isLockError = lastErr.message.includes(".lock") ||
+				const isLockError =
+					lastErr.message.includes(".lock") ||
 					lastErr.message.includes("Unable to create") ||
 					lastErr.message.includes("index.lock");
 
@@ -178,7 +179,9 @@ export class WorktreeManager {
 
 		try {
 			await git(["add", "-A"], info.path);
-		} catch { /* empty */ }
+		} catch {
+			/* empty */
+		}
 
 		const { stdout } = await git(["diff", "--cached", "--stat"], info.path);
 		return stdout.trim() || "(no changes)";
@@ -191,7 +194,9 @@ export class WorktreeManager {
 
 		try {
 			await git(["add", "-A"], info.path);
-		} catch { /* empty */ }
+		} catch {
+			/* empty */
+		}
 
 		const { stdout } = await git(["diff", "--cached", "--name-only"], info.path);
 		return stdout.trim().split("\n").filter(Boolean);
@@ -231,7 +236,9 @@ export class WorktreeManager {
 			// Prune stale worktree entries
 			try {
 				await git(["worktree", "prune"], this.repoRoot);
-			} catch { /* non-fatal */ }
+			} catch {
+				/* non-fatal */
+			}
 		}
 
 		if (deleteBranch) {
@@ -266,6 +273,8 @@ export class WorktreeManager {
 			if (existsSync(this.baseDir) && readdirSync(this.baseDir).length === 0) {
 				rmSync(this.baseDir, { recursive: true, force: true });
 			}
-		} catch { /* non-fatal */ }
+		} catch {
+			/* non-fatal */
+		}
 	}
 }

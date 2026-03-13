@@ -5,12 +5,8 @@
  * without requiring real API keys or opencode installation.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import {
-	enableServerMode,
-	disableServerMode,
-	getActiveServerCount,
-} from "../src/agents/opencode.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { disableServerMode, enableServerMode, getActiveServerCount } from "../src/agents/opencode.js";
 
 describe("OpenCode Server Pool", () => {
 	afterEach(async () => {

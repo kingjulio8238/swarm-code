@@ -4,7 +4,7 @@
  * Tests the actual AsyncSemaphore exported from src/threads/manager.ts.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AsyncSemaphore } from "../../src/threads/manager.js";
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -154,7 +154,7 @@ describe("AsyncSemaphore", () => {
 			const sem = new AsyncSemaphore(max);
 			let peakActive = 0;
 
-			const workers = Array.from({ length: 10 }, async (_, i) => {
+			const workers = Array.from({ length: 10 }, async (_, _i) => {
 				await sem.acquire();
 				peakActive = Math.max(peakActive, sem.activeCount);
 				expect(sem.activeCount).toBeLessThanOrEqual(max);

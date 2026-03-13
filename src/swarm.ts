@@ -29,25 +29,29 @@ await import("./agents/codex.js");
 await import("./agents/aider.js");
 
 import { randomBytes } from "node:crypto";
-import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
-import { mergeAllThreads, type MergeAllOptions } from "./worktree/merge.js";
-import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
-import { routeTask, classifyTaskSlot, classifyTaskComplexity, describeAvailableAgents, FailureTracker } from "./routing/model-router.js";
-import { EpisodicMemory } from "./memory/episodic.js";
-import type { ThreadProgressPhase } from "./core/types.js";
 import type { Api, Model } from "@mariozechner/pi-ai";
-
-// UI system
-import { Spinner } from "./ui/spinner.js";
-import { ThreadDashboard } from "./ui/dashboard.js";
+import { EpisodicMemory } from "./memory/episodic.js";
+import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
+import { classifyTaskComplexity, describeAvailableAgents, FailureTracker, routeTask } from "./routing/model-router.js";
+import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
 import { renderBanner } from "./ui/banner.js";
-import { renderSummary, type SessionSummary } from "./ui/summary.js";
+import { ThreadDashboard } from "./ui/dashboard.js";
 import {
-	setLogLevel, setJsonMode, isJsonMode,
-	logInfo, logSuccess, logWarn, logError, logVerbose,
-	logDim, logRouter, logAnswer, logJson,
+	isJsonMode,
+	logAnswer,
+	logError,
+	logRouter,
+	logSuccess,
+	logVerbose,
+	logWarn,
+	setJsonMode,
+	setLogLevel,
 } from "./ui/log.js";
 import { runOnboarding } from "./ui/onboarding.js";
+// UI system
+import { Spinner } from "./ui/spinner.js";
+import { renderSummary, type SessionSummary } from "./ui/summary.js";
+import { type MergeAllOptions, mergeAllThreads } from "./worktree/merge.js";
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
 
@@ -102,7 +106,7 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 		} else if (arg === "--max-budget" && i + 1 < args.length) {
 			const rawBudget = args[++i];
 			const parsed = parseFloat(rawBudget);
-			if (isFinite(parsed) && parsed > 0) {
+			if (Number.isFinite(parsed) && parsed > 0) {
 				maxBudget = parsed;
 			} else {
 				logWarn(`Invalid --max-budget value "${rawBudget}", ignoring`);
@@ -149,14 +153,39 @@ function parseSwarmArgs(args: string[]): SwarmArgs {
 // ── Codebase scanning ───────────────────────────────────────────────────────
 
 const SKIP_DIRS = new Set([
-	"node_modules", ".git", "dist", "build", ".next", ".venv", "venv",
-	"__pycache__", ".swarm-worktrees", "coverage", ".turbo", ".cache",
+	"node_modules",
+	".git",
+	"dist",
+	"build",
+	".next",
+	".venv",
+	"venv",
+	"__pycache__",
+	".swarm-worktrees",
+	"coverage",
+	".turbo",
+	".cache",
 ]);
 
 const SKIP_EXTENSIONS = new Set([
-	".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".woff", ".woff2",
-	".ttf", ".eot", ".mp3", ".mp4", ".webm", ".zip", ".tar", ".gz",
-	".lock", ".map",
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".ico",
+	".svg",
+	".woff",
+	".woff2",
+	".ttf",
+	".eot",
+	".mp3",
+	".mp4",
+	".webm",
+	".zip",
+	".tar",
+	".gz",
+	".lock",
+	".map",
 ]);
 
 function scanDirectory(dir: string, maxFiles: number = 200, maxTotalSize: number = 2 * 1024 * 1024): string {
@@ -198,9 +227,7 @@ function scanDirectory(dir: string, maxFiles: number = 200, maxTotalSize: number
 					const relPath = path.relative(dir, fullPath);
 					files.push({ relPath, content });
 					totalSize += content.length;
-				} catch {
-					continue;
-				}
+				} catch {}
 			}
 		}
 	}
@@ -405,15 +432,17 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			setSummarizer(async (text: string, instruction: string) => {
 				const response = await completeSimple(resolved.model, {
 					systemPrompt: instruction,
-					messages: [{
-						role: "user",
-						content: text,
-						timestamp: Date.now(),
-					}],
+					messages: [
+						{
+							role: "user",
+							content: text,
+							timestamp: Date.now(),
+						},
+					],
 				});
 				return response.content
 					.filter((b): b is { type: "text"; text: string } => b.type === "text")
-					.map(b => b.text)
+					.map((b) => b.text)
 					.join("");
 			});
 		}
@@ -422,7 +451,8 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 		const agentDesc = await describeAvailableAgents();
 		let systemPrompt = buildSwarmSystemPrompt(config, agentDesc);
 		if (args.dryRun) {
-			systemPrompt += "\n\n## DRY RUN MODE\nDo NOT call thread() or async_thread(). Instead, describe what threads you WOULD spawn (task, files, model). Call FINAL() with your execution plan.";
+			systemPrompt +=
+				"\n\n## DRY RUN MODE\nDo NOT call thread() or async_thread(). Instead, describe what threads you WOULD spawn (task, files, model). Call FINAL() with your execution plan.";
 		}
 
 		// Add episodic memory hints
@@ -477,28 +507,25 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 
 			// Track failure in the failure tracker for routing adjustments
 			if (!result.success) {
-				failureTracker.recordFailure(
-					resolvedAgent,
-					resolvedModel,
-					task,
-					result.summary || "unknown error",
-				);
+				failureTracker.recordFailure(resolvedAgent, resolvedModel, task, result.summary || "unknown error");
 			}
 
 			// Record episode
 			if (episodicMemory && result.success && routeSlot) {
-				episodicMemory.record({
-					task,
-					agent: resolvedAgent,
-					model: resolvedModel,
-					slot: routeSlot,
-					complexity: routeComplexity,
-					success: true,
-					durationMs: result.durationMs,
-					estimatedCostUsd: result.estimatedCostUsd,
-					filesChanged: result.filesChanged,
-					summary: result.summary,
-				}).catch(() => {});
+				episodicMemory
+					.record({
+						task,
+						agent: resolvedAgent,
+						model: resolvedModel,
+						slot: routeSlot,
+						complexity: routeComplexity,
+						success: true,
+						durationMs: result.durationMs,
+						estimatedCostUsd: result.estimatedCostUsd,
+						filesChanged: result.filesChanged,
+						summary: result.summary,
+					})
+					.catch(() => {});
 			}
 
 			return {
@@ -516,19 +543,17 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			const mergeOpts: MergeAllOptions = { continueOnConflict: true };
 			const results = await mergeAllThreads(args.dir, threads, mergeOpts);
 
-			const merged = results.filter(r => r.success).length;
-			const failed = results.filter(r => !r.success).length;
+			const merged = results.filter((r) => r.success).length;
+			const failed = results.filter((r) => !r.success).length;
 			if (failed > 0) {
 				logWarn(`Merged ${merged} branches, ${failed} failed`);
 			} else if (merged > 0) {
 				logSuccess(`Merged ${merged} branches`);
 			}
 
-			const summary = results.map((r) =>
-				r.success
-					? `Merged ${r.branch}: ${r.message}`
-					: `FAILED ${r.branch}: ${r.message}`,
-			).join("\n");
+			const summary = results
+				.map((r) => (r.success ? `Merged ${r.branch}: ${r.message}` : `FAILED ${r.branch}: ${r.message}`))
+				.join("\n");
 
 			return {
 				result: summary || "No threads to merge",
@@ -552,11 +577,11 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			onProgress: (info) => {
 				spinner.update(
 					`iteration ${info.iteration}/${info.maxIterations}` +
-					(info.subQueries > 0 ? ` · ${info.subQueries} queries` : ""),
+						(info.subQueries > 0 ? ` · ${info.subQueries} queries` : ""),
 				);
 				logVerbose(
 					`Iteration ${info.iteration}/${info.maxIterations} | ` +
-					`Sub-queries: ${info.subQueries} | Phase: ${info.phase}`,
+						`Sub-queries: ${info.subQueries} | Phase: ${info.phase}`,
 				);
 			},
 		});

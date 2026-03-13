@@ -2,11 +2,11 @@
  * Integration tests for WorktreeManager using real temporary git repos.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { WorktreeManager } from "../../src/worktree/manager.js";
 
 /** Create a real temporary git repo with an initial commit. */
@@ -98,9 +98,7 @@ describe("WorktreeManager", () => {
 			expect(fs.existsSync(info.path)).toBe(true);
 
 			// Verify the branch actually exists in the repo
-			const branches = execFileSync("git", ["branch", "--list"], { cwd: repoDir })
-				.toString()
-				.trim();
+			const branches = execFileSync("git", ["branch", "--list"], { cwd: repoDir }).toString().trim();
 			expect(branches).toContain("swarm/test-thread-1");
 		});
 
@@ -276,9 +274,7 @@ describe("WorktreeManager", () => {
 			await mgr.create("keep-branch-thread");
 			await mgr.destroy("keep-branch-thread");
 
-			const branches = execFileSync("git", ["branch", "--list"], { cwd: repoDir })
-				.toString()
-				.trim();
+			const branches = execFileSync("git", ["branch", "--list"], { cwd: repoDir }).toString().trim();
 			expect(branches).toContain("swarm/keep-branch-thread");
 		});
 
@@ -292,9 +288,7 @@ describe("WorktreeManager", () => {
 			await mgr.create("delete-branch-thread");
 			await mgr.destroy("delete-branch-thread", true);
 
-			const branches = execFileSync("git", ["branch", "--list"], { cwd: repoDir })
-				.toString()
-				.trim();
+			const branches = execFileSync("git", ["branch", "--list"], { cwd: repoDir }).toString().trim();
 			expect(branches).not.toContain("swarm/delete-branch-thread");
 		});
 
@@ -333,9 +327,7 @@ describe("WorktreeManager", () => {
 			expect(fs.existsSync(info3.path)).toBe(false);
 
 			// Branches should be deleted too (destroyAll uses deleteBranch=true)
-			const branches = execFileSync("git", ["branch", "--list"], { cwd: repoDir })
-				.toString()
-				.trim();
+			const branches = execFileSync("git", ["branch", "--list"], { cwd: repoDir }).toString().trim();
 			expect(branches).not.toContain("swarm/all-1");
 			expect(branches).not.toContain("swarm/all-2");
 			expect(branches).not.toContain("swarm/all-3");

@@ -120,13 +120,13 @@ function filterToSuccessfulOutput(agentOutput: string): string {
 		}
 
 		// Always keep lines with success signals
-		if (SUCCESS_SIGNAL_PATTERNS.some(p => p.test(trimmed))) {
+		if (SUCCESS_SIGNAL_PATTERNS.some((p) => p.test(trimmed))) {
 			filtered.push(line);
 			continue;
 		}
 
 		// Skip lines matching failure/noise patterns
-		if (FAILURE_NOISE_PATTERNS.some(p => p.test(trimmed))) {
+		if (FAILURE_NOISE_PATTERNS.some((p) => p.test(trimmed))) {
 			continue;
 		}
 
@@ -204,9 +204,8 @@ function compressStructured(input: CompressionInput, maxChars: number): string {
 	// Key diff hunks (first portion)
 	if (input.diff && input.diff !== "(no changes)") {
 		const diffBudget = Math.floor(maxChars * 0.4);
-		const truncatedDiff = input.diff.length > diffBudget
-			? input.diff.slice(0, diffBudget) + "\n... [diff truncated]"
-			: input.diff;
+		const truncatedDiff =
+			input.diff.length > diffBudget ? `${input.diff.slice(0, diffBudget)}\n... [diff truncated]` : input.diff;
 		parts.push(`\nKey changes:\n${truncatedDiff}`);
 	}
 
@@ -215,9 +214,7 @@ function compressStructured(input: CompressionInput, maxChars: number): string {
 		const outputBudget = Math.floor(maxChars * 0.3);
 		const lines = input.agentOutput.split("\n");
 		const tail = lines.slice(-30).join("\n");
-		const truncatedOutput = tail.length > outputBudget
-			? tail.slice(-outputBudget)
-			: tail;
+		const truncatedOutput = tail.length > outputBudget ? tail.slice(-outputBudget) : tail;
 		parts.push(`\nAgent output (last 30 lines):\n${truncatedOutput}`);
 	}
 
@@ -225,7 +222,7 @@ function compressStructured(input: CompressionInput, maxChars: number): string {
 
 	// Final truncation safety (4x maxChars is the hard cap for combined sections)
 	if (result.length > maxChars * 4) {
-		return result.slice(0, maxChars * 4) + "\n... [compressed output truncated]";
+		return `${result.slice(0, maxChars * 4)}\n... [compressed output truncated]`;
 	}
 
 	return result;
@@ -246,18 +243,16 @@ function compressDiffOnly(input: CompressionInput, maxChars: number): string {
 }
 
 function compressTruncate(input: CompressionInput, maxChars: number): string {
-	const raw = [
-		`Status: ${input.success ? "SUCCESS" : "FAILED"}`,
-		input.agentOutput,
-		input.diff,
-	].filter(Boolean).join("\n\n");
+	const raw = [`Status: ${input.success ? "SUCCESS" : "FAILED"}`, input.agentOutput, input.diff]
+		.filter(Boolean)
+		.join("\n\n");
 
 	if (raw.length > maxChars * 4) {
 		// Preserve status line at the head, truncate from the middle
 		const statusEnd = raw.indexOf("\n");
 		const statusLine = statusEnd !== -1 ? raw.slice(0, statusEnd) : "";
 		const remaining = maxChars * 4 - statusLine.length - 20;
-		return statusLine + "\n... [truncated]\n" + raw.slice(-remaining);
+		return `${statusLine}\n... [truncated]\n${raw.slice(-remaining)}`;
 	}
 	return raw;
 }
@@ -314,14 +309,12 @@ async function compressLlmSummary(input: CompressionInput, maxChars: number): Pr
 
 		// Prepend status line
 		const status = `Status: ${input.success ? "SUCCESS" : "FAILED"} (${(input.durationMs / 1000).toFixed(1)}s)`;
-		const filesLine = input.filesChanged.length > 0
-			? `\nFiles: ${input.filesChanged.join(", ")}`
-			: "";
+		const filesLine = input.filesChanged.length > 0 ? `\nFiles: ${input.filesChanged.join(", ")}` : "";
 		const result = `${status}${filesLine}\n\n${summary}`;
 
 		// Safety cap
 		if (result.length > maxChars * 2) {
-			return result.slice(0, maxChars * 2) + "\n... [summary truncated]";
+			return `${result.slice(0, maxChars * 2)}\n... [summary truncated]`;
 		}
 		return result;
 	} catch {

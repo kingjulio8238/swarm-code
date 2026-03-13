@@ -12,22 +12,21 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { getAgent, listAgents } from "../agents/provider.js";
+import { compressResult } from "../compression/compressor.js";
 import type {
 	BudgetState,
 	CompressedResult,
-	MODEL_PRICING,
 	SwarmConfig,
 	ThreadConfig,
 	ThreadProgressPhase,
 	ThreadState,
 } from "../core/types.js";
 import { MODEL_PRICING as PRICING } from "../core/types.js";
-import { getAgent, listAgents } from "../agents/provider.js";
-import { WorktreeManager } from "../worktree/manager.js";
-import { compressResult } from "../compression/compressor.js";
-import { ThreadCache, type ThreadCacheStats } from "./cache.js";
 import type { EpisodicMemory } from "../memory/episodic.js";
 import { AGENT_CAPABILITIES } from "../routing/model-router.js";
+import { WorktreeManager } from "../worktree/manager.js";
+import { ThreadCache, type ThreadCacheStats } from "./cache.js";
 
 // ── Async Semaphore ─────────────────────────────────────────────────────────
 
@@ -234,9 +233,9 @@ const FATAL_PATTERNS = [
 /** Classify an error as retryable or fatal. Default: retryable (optimistic). */
 function isRetryableError(error: string): boolean {
 	// Check fatal patterns first (takes priority)
-	if (FATAL_PATTERNS.some(p => p.test(error))) return false;
+	if (FATAL_PATTERNS.some((p) => p.test(error))) return false;
 	// Check retryable patterns
-	if (RETRYABLE_PATTERNS.some(p => p.test(error))) return true;
+	if (RETRYABLE_PATTERNS.some((p) => p.test(error))) return true;
 	// Default: retryable (be optimistic — the retry might work with a different agent)
 	return true;
 }
@@ -244,7 +243,7 @@ function isRetryableError(error: string): boolean {
 /** Calculate exponential backoff delay with jitter. */
 function backoffDelay(attempt: number, baseMs: number = 1000): number {
 	// Exponential: 1s, 2s, 4s, 8s... capped at 30s
-	const exponential = Math.min(baseMs * Math.pow(2, attempt - 1), 30000);
+	const exponential = Math.min(baseMs * 2 ** (attempt - 1), 30000);
 	// Add jitter (±25%)
 	const jitter = exponential * 0.25 * (Math.random() * 2 - 1);
 	return Math.max(100, exponential + jitter);
@@ -258,10 +257,10 @@ function backoffDelay(attempt: number, baseMs: number = 1000): number {
 function pickAlternativeAgent(
 	failedAgent: string,
 	failedModel: string,
-	config: SwarmConfig,
+	_config: SwarmConfig,
 	attempt: number = 1,
 ): { agent: string; model: string } | null {
-	const available = listAgents().filter(name => name !== failedAgent && name !== "mock");
+	const available = listAgents().filter((name) => name !== failedAgent && name !== "mock");
 	if (available.length === 0) return null;
 
 	// Build candidates, preferring agents with different default models
@@ -433,8 +432,11 @@ export class ThreadManager {
 				// Exponential backoff before retry (abort-aware)
 				const delay = backoffDelay(attempt - 1);
 				state.phase = "retrying";
-				this.onThreadProgress?.(threadId, "retrying",
-					`attempt ${attempt}/${maxAttempts}, backoff ${(delay / 1000).toFixed(1)}s`);
+				this.onThreadProgress?.(
+					threadId,
+					"retrying",
+					`attempt ${attempt}/${maxAttempts}, backoff ${(delay / 1000).toFixed(1)}s`,
+				);
 
 				// Race the delay against the abort signal so cancellation is immediate
 				await new Promise<void>((resolve) => {
@@ -444,7 +446,10 @@ export class ThreadManager {
 						resolve();
 						return;
 					}
-					const onAbort = () => { clearTimeout(timer); resolve(); };
+					const onAbort = () => {
+						clearTimeout(timer);
+						resolve();
+					};
 					threadAc.signal.addEventListener("abort", onAbort, { once: true });
 				});
 
@@ -478,8 +483,7 @@ export class ThreadManager {
 						...currentConfig,
 						agent: { backend: alt.agent, model: alt.model },
 					};
-					this.onThreadProgress?.(threadId, "retrying",
-						`re-routing: ${currentAgent} → ${alt.agent}`);
+					this.onThreadProgress?.(threadId, "retrying", `re-routing: ${currentAgent} → ${alt.agent}`);
 				}
 			}
 		}
@@ -501,8 +505,11 @@ export class ThreadManager {
 	): Promise<CompressedResult> {
 		// Wait for a concurrency slot
 		state.phase = "queued";
-		this.onThreadProgress?.(threadId, "queued",
-			this.semaphore.waitingCount > 0 ? `waiting (${this.semaphore.waitingCount} ahead)` : undefined);
+		this.onThreadProgress?.(
+			threadId,
+			"queued",
+			this.semaphore.waitingCount > 0 ? `waiting (${this.semaphore.waitingCount} ahead)` : undefined,
+		);
 
 		await this.semaphore.acquire();
 
@@ -609,11 +616,7 @@ export class ThreadManager {
 
 			// Record cost — uses real usage when available, falls back to estimate
 			const model = threadConfig.agent.model || this.config.default_model;
-			const { cost, isEstimate } = this.budget.recordCost(
-				threadId,
-				model,
-				agentResult.usage,
-			);
+			const { cost, isEstimate } = this.budget.recordCost(threadId, model, agentResult.usage);
 			state.estimatedCostUsd = cost;
 
 			const costLabel = isEstimate ? `~$${cost.toFixed(4)}` : `$${cost.toFixed(4)}`;
@@ -636,8 +639,7 @@ export class ThreadManager {
 			state.phase = "completed";
 			state.result = result;
 			state.completedAt = Date.now();
-			this.onThreadProgress?.(threadId, "completed",
-				`${filesChanged.length} files, ${costLabel}${usageLabel}`);
+			this.onThreadProgress?.(threadId, "completed", `${filesChanged.length} files, ${costLabel}${usageLabel}`);
 
 			// Cache successful results for subthread reuse
 			if (result.success) {
@@ -653,18 +655,20 @@ export class ThreadManager {
 				// Record episode in episodic memory (fire-and-forget)
 				// Only records if auto-routing is NOT active (swarm.ts records richer episodes with slot/complexity)
 				if (this.episodicMemory && !this.config.auto_model_selection) {
-					this.episodicMemory.record({
-						task: cfg.task,
-						agent: cfg.agent.backend || this.config.default_agent,
-						model: cfg.agent.model || this.config.default_model,
-						slot: "",
-						complexity: "",
-						success: true,
-						durationMs: result.durationMs,
-						estimatedCostUsd: cost,
-						filesChanged: filesChanged,
-						summary: compressed,
-					}).catch(() => {}); // Non-fatal
+					this.episodicMemory
+						.record({
+							task: cfg.task,
+							agent: cfg.agent.backend || this.config.default_agent,
+							model: cfg.agent.model || this.config.default_model,
+							slot: "",
+							complexity: "",
+							success: true,
+							durationMs: result.durationMs,
+							estimatedCostUsd: cost,
+							filesChanged: filesChanged,
+							summary: compressed,
+						})
+						.catch(() => {}); // Non-fatal
 				}
 			}
 

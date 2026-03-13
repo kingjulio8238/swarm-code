@@ -36,27 +36,19 @@ await import("./agents/codex.js");
 await import("./agents/aider.js");
 
 import { randomBytes } from "node:crypto";
-import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
-import { mergeAllThreads, mergeThreadBranch, type MergeAllOptions } from "./worktree/merge.js";
-import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
-import { routeTask, classifyTaskComplexity, describeAvailableAgents, FailureTracker } from "./routing/model-router.js";
-import { EpisodicMemory } from "./memory/episodic.js";
-import type { ThreadState } from "./core/types.js";
 import type { Api, Model } from "@mariozechner/pi-ai";
-
+import type { ThreadState } from "./core/types.js";
+import { EpisodicMemory } from "./memory/episodic.js";
+import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
+import { classifyTaskComplexity, describeAvailableAgents, FailureTracker, routeTask } from "./routing/model-router.js";
+import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
+import { ThreadDashboard } from "./ui/dashboard.js";
+import { logError, logRouter, logSuccess, logVerbose, logWarn, setLogLevel } from "./ui/log.js";
+import { runOnboarding } from "./ui/onboarding.js";
 // UI system
 import { Spinner } from "./ui/spinner.js";
-import { ThreadDashboard } from "./ui/dashboard.js";
-import {
-	setLogLevel,
-	logSuccess, logWarn, logError, logVerbose,
-	logRouter,
-} from "./ui/log.js";
-import { runOnboarding } from "./ui/onboarding.js";
-import {
-	bold, coral, cyan, dim, yellow, green, red,
-	isTTY, symbols, termWidth, truncate,
-} from "./ui/theme.js";
+import { bold, coral, cyan, dim, green, isTTY, red, symbols, termWidth, truncate, yellow } from "./ui/theme.js";
+import { type MergeAllOptions, mergeAllThreads, mergeThreadBranch } from "./worktree/merge.js";
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
 
@@ -90,7 +82,7 @@ function parseInteractiveArgs(args: string[]): InteractiveSwarmArgs {
 		} else if (arg === "--max-budget" && i + 1 < args.length) {
 			const raw = args[++i];
 			const parsed = parseFloat(raw);
-			if (isFinite(parsed) && parsed > 0) maxBudget = parsed;
+			if (Number.isFinite(parsed) && parsed > 0) maxBudget = parsed;
 		} else if (arg === "--verbose") {
 			verbose = true;
 		} else if (arg === "--quiet" || arg === "-q") {
@@ -120,14 +112,39 @@ function parseInteractiveArgs(args: string[]): InteractiveSwarmArgs {
 // ── Codebase scanning (mirrored from swarm.ts) ──────────────────────────────
 
 const SKIP_DIRS = new Set([
-	"node_modules", ".git", "dist", "build", ".next", ".venv", "venv",
-	"__pycache__", ".swarm-worktrees", "coverage", ".turbo", ".cache",
+	"node_modules",
+	".git",
+	"dist",
+	"build",
+	".next",
+	".venv",
+	"venv",
+	"__pycache__",
+	".swarm-worktrees",
+	"coverage",
+	".turbo",
+	".cache",
 ]);
 
 const SKIP_EXTENSIONS = new Set([
-	".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".woff", ".woff2",
-	".ttf", ".eot", ".mp3", ".mp4", ".webm", ".zip", ".tar", ".gz",
-	".lock", ".map",
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".ico",
+	".svg",
+	".woff",
+	".woff2",
+	".ttf",
+	".eot",
+	".mp3",
+	".mp4",
+	".webm",
+	".zip",
+	".tar",
+	".gz",
+	".lock",
+	".map",
 ]);
 
 function scanDirectory(dir: string, maxFiles: number = 200, maxTotalSize: number = 2 * 1024 * 1024): string {
@@ -169,9 +186,7 @@ function scanDirectory(dir: string, maxFiles: number = 200, maxTotalSize: number
 					const relPath = path.relative(dir, fullPath);
 					files.push({ relPath, content });
 					totalSize += content.length;
-				} catch {
-					continue;
-				}
+				} catch {}
 			}
 		}
 	}
@@ -280,22 +295,33 @@ function formatCost(usd: number): string {
 
 function statusIcon(status: string): string {
 	switch (status) {
-		case "completed": return green(symbols.check);
-		case "failed": return red(symbols.cross);
-		case "cancelled": return yellow(symbols.dash);
-		case "running": return coral(symbols.arrow);
-		case "pending": return dim(symbols.dot);
-		default: return dim("?");
+		case "completed":
+			return green(symbols.check);
+		case "failed":
+			return red(symbols.cross);
+		case "cancelled":
+			return yellow(symbols.dash);
+		case "running":
+			return coral(symbols.arrow);
+		case "pending":
+			return dim(symbols.dot);
+		default:
+			return dim("?");
 	}
 }
 
 function statusColor(status: string): (s: string) => string {
 	switch (status) {
-		case "completed": return green;
-		case "failed": return red;
-		case "cancelled": return yellow;
-		case "running": return coral;
-		default: return dim;
+		case "completed":
+			return green;
+		case "failed":
+			return red;
+		case "cancelled":
+			return yellow;
+		case "running":
+			return coral;
+		default:
+			return dim;
 	}
 }
 
@@ -339,11 +365,12 @@ function cmdThreads(threadManager: ThreadManager): void {
 		const icon = statusIcon(t.status);
 		const id = dim(t.id.slice(0, 8));
 		const status = statusColor(t.status)(t.status);
-		const dur = t.completedAt && t.startedAt
-			? dim(formatDuration(t.completedAt - t.startedAt))
-			: t.startedAt
-				? dim(formatDuration(Date.now() - t.startedAt))
-				: dim("--");
+		const dur =
+			t.completedAt && t.startedAt
+				? dim(formatDuration(t.completedAt - t.startedAt))
+				: t.startedAt
+					? dim(formatDuration(Date.now() - t.startedAt))
+					: dim("--");
 		const cost = t.estimatedCostUsd > 0 ? dim(formatCost(t.estimatedCostUsd)) : "";
 		const files = t.result?.filesChanged.length ?? 0;
 		const fileStr = files > 0 ? dim(`${files} files`) : "";
@@ -364,14 +391,14 @@ function cmdThread(threadManager: ThreadManager, threadId: string): void {
 
 	// Find thread by prefix match
 	const threads = threadManager.getThreads();
-	const matches = threads.filter(t => t.id.startsWith(threadId));
+	const matches = threads.filter((t) => t.id.startsWith(threadId));
 
 	if (matches.length === 0) {
 		logError(`No thread found matching "${threadId}"`);
 		return;
 	}
 	if (matches.length > 1) {
-		logWarn(`Multiple matches for "${threadId}": ${matches.map(t => t.id.slice(0, 8)).join(", ")}`);
+		logWarn(`Multiple matches for "${threadId}": ${matches.map((t) => t.id.slice(0, 8)).join(", ")}`);
 		return;
 	}
 
@@ -436,11 +463,7 @@ function cmdThread(threadManager: ThreadManager, threadId: string): void {
 	out.write("\n");
 }
 
-async function cmdMerge(
-	threadManager: ThreadManager,
-	dir: string,
-	idArgs: string[],
-): Promise<void> {
+async function cmdMerge(threadManager: ThreadManager, dir: string, idArgs: string[]): Promise<void> {
 	const threads = threadManager.getThreads();
 	const out = process.stderr;
 
@@ -466,15 +489,15 @@ async function cmdMerge(
 			}
 		}
 
-		const merged = results.filter(r => r.success).length;
-		const failed = results.filter(r => !r.success).length;
+		const merged = results.filter((r) => r.success).length;
+		const failed = results.filter((r) => !r.success).length;
 		if (merged > 0) logSuccess(`Merged ${merged} branches`);
 		if (failed > 0) logWarn(`${failed} branches had conflicts`);
 		out.write("\n");
 	} else {
 		// Merge specific threads by ID prefix
 		for (const idArg of idArgs) {
-			const match = threads.find(t => t.id.startsWith(idArg));
+			const match = threads.find((t) => t.id.startsWith(idArg));
 			if (!match) {
 				logError(`No thread found matching "${idArg}"`);
 				continue;
@@ -504,10 +527,7 @@ async function cmdMerge(
 	}
 }
 
-async function cmdReject(
-	threadManager: ThreadManager,
-	threadId: string,
-): Promise<void> {
+async function cmdReject(threadManager: ThreadManager, threadId: string): Promise<void> {
 	const out = process.stderr;
 
 	if (!threadId) {
@@ -516,7 +536,7 @@ async function cmdReject(
 	}
 
 	const threads = threadManager.getThreads();
-	const match = threads.find(t => t.id.startsWith(threadId));
+	const match = threads.find((t) => t.id.startsWith(threadId));
 
 	if (!match) {
 		logError(`No thread found matching "${threadId}"`);
@@ -550,10 +570,10 @@ function cmdDag(threadManager: ThreadManager): void {
 	out.write("\n");
 
 	// Group by status for visual clarity
-	const running = threads.filter(t => t.status === "running" || t.status === "pending");
-	const completed = threads.filter(t => t.status === "completed");
-	const failed = threads.filter(t => t.status === "failed");
-	const cancelled = threads.filter(t => t.status === "cancelled");
+	const running = threads.filter((t) => t.status === "running" || t.status === "pending");
+	const completed = threads.filter((t) => t.status === "completed");
+	const failed = threads.filter((t) => t.status === "failed");
+	const cancelled = threads.filter((t) => t.status === "cancelled");
 
 	// Main branch root
 	out.write(`  ${cyan(symbols.dot)} ${bold("main")}\n`);
@@ -563,9 +583,7 @@ function cmdDag(threadManager: ThreadManager): void {
 		const branch = t.branchName || `swarm/${t.id.slice(0, 8)}`;
 		const icon = statusIcon(t.status);
 		const task = truncate(t.config.task, 35);
-		const dur = t.completedAt && t.startedAt
-			? dim(formatDuration(t.completedAt - t.startedAt))
-			: "";
+		const dur = t.completedAt && t.startedAt ? dim(formatDuration(t.completedAt - t.startedAt)) : "";
 
 		out.write(`  ${cyan(symbols.vertLine)}\n`);
 		out.write(`  ${cyan(connector)}${cyan(symbols.horizontal.repeat(2))} ${icon} ${dim(branch)} ${dim(task)} ${dur}\n`);
@@ -579,7 +597,9 @@ function cmdDag(threadManager: ThreadManager): void {
 	out.write("\n");
 
 	// Legend
-	out.write(`  ${dim("Legend:")} ${green(symbols.check)} completed  ${red(symbols.cross)} failed  ${yellow(symbols.dash)} cancelled  ${coral(symbols.arrow)} running  ${dim(symbols.dot)} pending\n`);
+	out.write(
+		`  ${dim("Legend:")} ${green(symbols.check)} completed  ${red(symbols.cross)} failed  ${yellow(symbols.dash)} cancelled  ${coral(symbols.arrow)} running  ${dim(symbols.dot)} pending\n`,
+	);
 	out.write("\n");
 }
 
@@ -591,22 +611,26 @@ function cmdBudget(threadManager: ThreadManager): void {
 	out.write(`  ${bold(cyan("Budget"))}\n`);
 	out.write(`  ${dim(symbols.horizontal.repeat(Math.min(termWidth() - 4, 40)))}\n`);
 
-	const pct = budget.sessionLimitUsd > 0
-		? (budget.totalSpentUsd / budget.sessionLimitUsd * 100).toFixed(1)
-		: "0";
+	const pct = budget.sessionLimitUsd > 0 ? ((budget.totalSpentUsd / budget.sessionLimitUsd) * 100).toFixed(1) : "0";
 	const budgetColor = budget.totalSpentUsd > budget.sessionLimitUsd * 0.8 ? yellow : green;
 
-	out.write(`  ${dim("Spent")}         ${budgetColor(formatCost(budget.totalSpentUsd))} / ${formatCost(budget.sessionLimitUsd)} (${pct}%)\n`);
+	out.write(
+		`  ${dim("Spent")}         ${budgetColor(formatCost(budget.totalSpentUsd))} / ${formatCost(budget.sessionLimitUsd)} (${pct}%)\n`,
+	);
 	out.write(`  ${dim("Per-thread")}    ${formatCost(budget.perThreadLimitUsd)} max\n`);
 
 	if (budget.actualCostThreads > 0 || budget.estimatedCostThreads > 0) {
-		out.write(`  ${dim("Cost source")}   ${budget.actualCostThreads} actual, ${budget.estimatedCostThreads} estimated\n`);
+		out.write(
+			`  ${dim("Cost source")}   ${budget.actualCostThreads} actual, ${budget.estimatedCostThreads} estimated\n`,
+		);
 	}
 
 	const tokens = budget.totalTokens;
 	if (tokens.input > 0 || tokens.output > 0) {
 		const totalK = ((tokens.input + tokens.output) / 1000).toFixed(1);
-		out.write(`  ${dim("Tokens")}        ${tokens.input.toLocaleString()} in + ${tokens.output.toLocaleString()} out (${totalK}K)\n`);
+		out.write(
+			`  ${dim("Tokens")}        ${tokens.input.toLocaleString()} in + ${tokens.output.toLocaleString()} out (${totalK}K)\n`,
+		);
 	}
 
 	// Per-thread costs
@@ -636,10 +660,10 @@ function cmdStatus(threadManager: ThreadManager, sessionStartTime: number, taskC
 	out.write(`  ${dim("Tasks run")}     ${taskCount}\n`);
 
 	// Thread stats
-	const completed = threads.filter(t => t.status === "completed").length;
-	const failed = threads.filter(t => t.status === "failed").length;
-	const running = threads.filter(t => t.status === "running").length;
-	const pending = threads.filter(t => t.status === "pending").length;
+	const completed = threads.filter((t) => t.status === "completed").length;
+	const failed = threads.filter((t) => t.status === "failed").length;
+	const running = threads.filter((t) => t.status === "running").length;
+	const pending = threads.filter((t) => t.status === "pending").length;
 
 	out.write(`  ${dim("Threads")}       ${threads.length} total`);
 	if (completed > 0) out.write(` ${green(`${completed} done`)}`);
@@ -648,13 +672,15 @@ function cmdStatus(threadManager: ThreadManager, sessionStartTime: number, taskC
 	if (pending > 0) out.write(` ${dim(`${pending} pending`)}`);
 	out.write("\n");
 
-	out.write(`  ${dim("Concurrency")}   ${concurrency.active}/${concurrency.max} active, ${concurrency.waiting} waiting\n`);
+	out.write(
+		`  ${dim("Concurrency")}   ${concurrency.active}/${concurrency.max} active, ${concurrency.waiting} waiting\n`,
+	);
 
 	// Budget
-	const pct = budget.sessionLimitUsd > 0
-		? (budget.totalSpentUsd / budget.sessionLimitUsd * 100).toFixed(1)
-		: "0";
-	out.write(`  ${dim("Budget")}        ${formatCost(budget.totalSpentUsd)} / ${formatCost(budget.sessionLimitUsd)} (${pct}%)\n`);
+	const pct = budget.sessionLimitUsd > 0 ? ((budget.totalSpentUsd / budget.sessionLimitUsd) * 100).toFixed(1) : "0";
+	out.write(
+		`  ${dim("Budget")}        ${formatCost(budget.totalSpentUsd)} / ${formatCost(budget.sessionLimitUsd)} (${pct}%)\n`,
+	);
 
 	// Cache
 	if (cache.hits > 0 || cache.size > 0) {
@@ -685,7 +711,9 @@ function renderInteractiveBanner(config: {
 		const rightPad = symbols.horizontal.repeat(Math.ceil(padLen / 2));
 
 		out.write("\n");
-		out.write(`  ${cyan(`${symbols.topLeft}${leftPad}`)}${bold(coral(title))}${dim(mode)}${cyan(`${rightPad}${symbols.topRight}`)}\n`);
+		out.write(
+			`  ${cyan(`${symbols.topLeft}${leftPad}`)}${bold(coral(title))}${dim(mode)}${cyan(`${rightPad}${symbols.topRight}`)}\n`,
+		);
 		out.write(`  ${cyan(symbols.vertLine)}${" ".repeat(Math.max(0, w - 2))}${cyan(symbols.vertLine)}\n`);
 	} else {
 		out.write("\nswarm interactive\n");
@@ -702,7 +730,9 @@ function renderInteractiveBanner(config: {
 
 	if (isTTY) {
 		out.write(`  ${cyan(symbols.vertLine)}${" ".repeat(Math.max(0, w - 2))}${cyan(symbols.vertLine)}\n`);
-		out.write(`  ${cyan(symbols.bottomLeft)}${cyan(symbols.horizontal.repeat(Math.max(0, w - 2)))}${cyan(symbols.bottomRight)}\n`);
+		out.write(
+			`  ${cyan(symbols.bottomLeft)}${cyan(symbols.horizontal.repeat(Math.max(0, w - 2)))}${cyan(symbols.bottomRight)}\n`,
+		);
 	}
 
 	out.write(`\n  ${dim("Type a task to run, or /help for commands.")}\n\n`);
@@ -801,15 +831,17 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 		setSummarizer(async (text: string, instruction: string) => {
 			const response = await completeSimple(resolved.model, {
 				systemPrompt: instruction,
-				messages: [{
-					role: "user",
-					content: text,
-					timestamp: Date.now(),
-				}],
+				messages: [
+					{
+						role: "user",
+						content: text,
+						timestamp: Date.now(),
+					},
+				],
 			});
 			return response.content
 				.filter((b): b is { type: "text"; text: string } => b.type === "text")
-				.map(b => b.text)
+				.map((b) => b.text)
 				.join("");
 		});
 	}
@@ -863,7 +895,9 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 			process.stderr.write(`\n  ${dim("Press Ctrl+C again to exit, or type /quit")}\n`);
 			sigintCount = 1;
 			// Reset after 2 seconds
-			setTimeout(() => { sigintCount = 0; }, 2000);
+			setTimeout(() => {
+				sigintCount = 0;
+			}, 2000);
 		}
 	}
 
@@ -927,18 +961,20 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 		// Record episode or failure
 		if (result.success) {
 			if (episodicMemory && routeSlot) {
-				episodicMemory.record({
-					task,
-					agent: resolvedAgent,
-					model: resolvedModel,
-					slot: routeSlot,
-					complexity: routeComplexity,
-					success: true,
-					durationMs: result.durationMs,
-					estimatedCostUsd: result.estimatedCostUsd,
-					filesChanged: result.filesChanged,
-					summary: result.summary,
-				}).catch(() => {});
+				episodicMemory
+					.record({
+						task,
+						agent: resolvedAgent,
+						model: resolvedModel,
+						slot: routeSlot,
+						complexity: routeComplexity,
+						success: true,
+						durationMs: result.durationMs,
+						estimatedCostUsd: result.estimatedCostUsd,
+						filesChanged: result.filesChanged,
+						summary: result.summary,
+					})
+					.catch(() => {});
 			}
 		} else {
 			failureTracker.recordFailure(resolvedAgent, resolvedModel, task, result.summary || "unknown error");
@@ -959,19 +995,17 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 		const mergeOpts: MergeAllOptions = { continueOnConflict: true };
 		const results = await mergeAllThreads(args.dir, threads, mergeOpts);
 
-		const merged = results.filter(r => r.success).length;
-		const failed = results.filter(r => !r.success).length;
+		const merged = results.filter((r) => r.success).length;
+		const failed = results.filter((r) => !r.success).length;
 		if (failed > 0) {
 			logWarn(`Merged ${merged} branches, ${failed} failed`);
 		} else if (merged > 0) {
 			logSuccess(`Merged ${merged} branches`);
 		}
 
-		const summary = results.map((r) =>
-			r.success
-				? `Merged ${r.branch}: ${r.message}`
-				: `FAILED ${r.branch}: ${r.message}`,
-		).join("\n");
+		const summary = results
+			.map((r) => (r.success ? `Merged ${r.branch}: ${r.message}` : `FAILED ${r.branch}: ${r.message}`))
+			.join("\n");
 
 		return {
 			result: summary || "No threads to merge",
@@ -1004,7 +1038,7 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 						const endIdx = taskSystemPrompt.indexOf("\n## ", memoryIdx + 1);
 						const before = taskSystemPrompt.slice(0, memoryIdx);
 						const after = endIdx !== -1 ? taskSystemPrompt.slice(endIdx) : "";
-						taskSystemPrompt = before + `## Episodic Memory\n${hints}\nConsider these strategies when decomposing your task.` + after;
+						taskSystemPrompt = `${before}## Episodic Memory\n${hints}\nConsider these strategies when decomposing your task.${after}`;
 					}
 				}
 			}
@@ -1021,11 +1055,11 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 				onProgress: (info) => {
 					spinner.update(
 						`iteration ${info.iteration}/${info.maxIterations}` +
-						(info.subQueries > 0 ? ` · ${info.subQueries} queries` : ""),
+							(info.subQueries > 0 ? ` · ${info.subQueries} queries` : ""),
 					);
 					logVerbose(
 						`Iteration ${info.iteration}/${info.maxIterations} | ` +
-						`Sub-queries: ${info.subQueries} | Phase: ${info.phase}`,
+							`Sub-queries: ${info.subQueries} | Phase: ${info.phase}`,
 					);
 				},
 			});
@@ -1038,7 +1072,9 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 			// Show concise result
 			process.stderr.write("\n");
 			const status = result.completed ? green("completed") : yellow("incomplete");
-			process.stderr.write(`  ${status} in ${bold(`${elapsed.toFixed(1)}s`)} ${dim(`(${result.iterations} iterations)`)}\n`);
+			process.stderr.write(
+				`  ${status} in ${bold(`${elapsed.toFixed(1)}s`)} ${dim(`(${result.iterations} iterations)`)}\n`,
+			);
 
 			// Show answer
 			if (result.answer) {

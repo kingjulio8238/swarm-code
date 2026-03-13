@@ -2,8 +2,8 @@
  * Tests for UI theme utilities — stripAnsi, truncate, pad, termWidth.
  */
 
-import { describe, it, expect } from "vitest";
-import { stripAnsi, truncate, pad, termWidth } from "../../src/ui/theme.js";
+import { describe, expect, it } from "vitest";
+import { pad, stripAnsi, termWidth, truncate } from "../../src/ui/theme.js";
 
 // ── stripAnsi ────────────────────────────────────────────────────────────────
 

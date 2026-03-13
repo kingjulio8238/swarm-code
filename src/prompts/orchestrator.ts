@@ -36,7 +36,9 @@ Merges thread branches back into the main branch sequentially. Returns merge sta
 ### 6. \`FINAL(answer)\` / \`FINAL_VAR(variable)\` — Return answer
 Call when you have a complete answer or summary of work done.
 
-${agentDescriptions ? `## Available Agents
+${
+	agentDescriptions
+		? `## Available Agents
 
 ${agentDescriptions}
 
@@ -53,7 +55,9 @@ ${agentDescriptions}
 - **OpenAI-specific**: Use \`codex\` for best o3/gpt-4o compatibility
 - When in doubt, use \`${config.default_agent}\` with the default model
 
-` : ""}## Strategy
+`
+		: ""
+}## Strategy
 
 1. **Analyze first**: Use \`llm_query()\` or direct Python to understand the codebase/task
 2. **Decompose**: Break the task into independent, parallelizable units

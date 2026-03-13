@@ -1,25 +1,17 @@
-import { describe, it, expect } from "vitest";
-import {
-	registerAgent,
-	getAgent,
-	listAgents,
-	getAvailableAgents,
-} from "../../../src/agents/provider.js";
+import { describe, expect, it } from "vitest";
+import { getAgent, getAvailableAgents, listAgents, registerAgent } from "../../../src/agents/provider.js";
 import type { AgentProvider } from "../../../src/core/types.js";
 
 // The mock agent self-registers on import of provider.ts (transitive),
 // so the registry may already contain entries.  Capture the baseline
 // so assertions account for pre-existing state.
-const baselineAgents = listAgents();
+const _baselineAgents = listAgents();
 
 // ---------------------------------------------------------------------------
 // Helpers — inline mock providers
 // ---------------------------------------------------------------------------
 
-function makeProvider(
-	name: string,
-	available = true,
-): AgentProvider {
+function makeProvider(name: string, available = true): AgentProvider {
 	return {
 		name,
 		isAvailable: async () => available,
@@ -48,13 +40,9 @@ describe("registerAgent + getAgent", () => {
 	});
 
 	it("throws for an unknown agent name with a helpful message", () => {
-		expect(() => getAgent("nonexistent-agent-xyz")).toThrowError(
-			/Unknown agent backend "nonexistent-agent-xyz"/,
-		);
+		expect(() => getAgent("nonexistent-agent-xyz")).toThrowError(/Unknown agent backend "nonexistent-agent-xyz"/);
 		// The error should also list available agents
-		expect(() => getAgent("nonexistent-agent-xyz")).toThrowError(
-			/Available:/,
-		);
+		expect(() => getAgent("nonexistent-agent-xyz")).toThrowError(/Available:/);
 	});
 });
 

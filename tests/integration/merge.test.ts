@@ -2,12 +2,12 @@
  * Integration tests for merge functions using real temporary git repos.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { execFileSync } from "node:child_process";
-import { mergeThreadBranch, mergeAllThreads } from "../../src/worktree/merge.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { mergeAllThreads, mergeThreadBranch } from "../../src/worktree/merge.js";
 
 /** Create a real temporary git repo with an initial commit. */
 function createTempRepo(): string {
@@ -38,11 +38,7 @@ function createBranchWithChange(
 }
 
 /** Build a mock ThreadState object with the required fields. */
-function makeThread(
-	id: string,
-	branchName: string,
-	overrides: Record<string, unknown> = {},
-): any {
+function makeThread(id: string, branchName: string, overrides: Record<string, unknown> = {}): any {
 	return {
 		id,
 		status: "completed",
@@ -122,9 +118,7 @@ describe("mergeThreadBranch", () => {
 		expect(result.conflicts).toContain("shared.txt");
 
 		// Main should be in a clean state after abort
-		const status = execFileSync("git", ["status", "--porcelain"], { cwd: repoDir })
-			.toString()
-			.trim();
+		const status = execFileSync("git", ["status", "--porcelain"], { cwd: repoDir }).toString().trim();
 		expect(status).toBe("");
 	});
 
@@ -145,20 +139,8 @@ describe("mergeAllThreads", () => {
 		tempDirs.push(repoDir);
 
 		// Create two branches that change different files
-		createBranchWithChange(
-			repoDir,
-			"swarm/thread-1",
-			"file1.ts",
-			"export const one = 1;\n",
-			"add file1",
-		);
-		createBranchWithChange(
-			repoDir,
-			"swarm/thread-2",
-			"file2.ts",
-			"export const two = 2;\n",
-			"add file2",
-		);
+		createBranchWithChange(repoDir, "swarm/thread-1", "file1.ts", "export const one = 1;\n", "add file1");
+		createBranchWithChange(repoDir, "swarm/thread-2", "file2.ts", "export const two = 2;\n", "add file2");
 
 		const threads = [
 			makeThread("thread-1", "swarm/thread-1", { completedAt: 1000 }),
@@ -182,27 +164,9 @@ describe("mergeAllThreads", () => {
 		const repoDir = createTempRepo();
 		tempDirs.push(repoDir);
 
-		createBranchWithChange(
-			repoDir,
-			"swarm/alpha",
-			"alpha.ts",
-			"export const alpha = 'a';\n",
-			"add alpha",
-		);
-		createBranchWithChange(
-			repoDir,
-			"swarm/beta",
-			"beta.ts",
-			"export const beta = 'b';\n",
-			"add beta",
-		);
-		createBranchWithChange(
-			repoDir,
-			"swarm/gamma",
-			"gamma.ts",
-			"export const gamma = 'g';\n",
-			"add gamma",
-		);
+		createBranchWithChange(repoDir, "swarm/alpha", "alpha.ts", "export const alpha = 'a';\n", "add alpha");
+		createBranchWithChange(repoDir, "swarm/beta", "beta.ts", "export const beta = 'b';\n", "add beta");
+		createBranchWithChange(repoDir, "swarm/gamma", "gamma.ts", "export const gamma = 'g';\n", "add gamma");
 
 		const threads = [
 			makeThread("alpha", "swarm/alpha", { completedAt: 1000 }),
@@ -240,18 +204,22 @@ describe("mergeAllThreads", () => {
 			"export const running = true;\n",
 			"in-progress work",
 		);
-		createBranchWithChange(
-			repoDir,
-			"swarm/failed-thread",
-			"failed.ts",
-			"export const failed = true;\n",
-			"failed work",
-		);
+		createBranchWithChange(repoDir, "swarm/failed-thread", "failed.ts", "export const failed = true;\n", "failed work");
 
 		const threads = [
 			makeThread("completed-thread", "swarm/completed-thread"),
 			makeThread("running-thread", "swarm/running-thread", { status: "running" }),
-			makeThread("failed-thread", "swarm/failed-thread", { status: "completed", result: { success: false, summary: "failed", filesChanged: [], diffStats: "", durationMs: 100, estimatedCostUsd: 0 } }),
+			makeThread("failed-thread", "swarm/failed-thread", {
+				status: "completed",
+				result: {
+					success: false,
+					summary: "failed",
+					filesChanged: [],
+					diffStats: "",
+					durationMs: 100,
+					estimatedCostUsd: 0,
+				},
+			}),
 		];
 
 		const results = await mergeAllThreads(repoDir, threads);
@@ -281,13 +249,7 @@ describe("mergeAllThreads", () => {
 		);
 
 		// Branch that will merge cleanly
-		createBranchWithChange(
-			repoDir,
-			"swarm/clean-thread",
-			"clean.ts",
-			"export const clean = true;\n",
-			"clean change",
-		);
+		createBranchWithChange(repoDir, "swarm/clean-thread", "clean.ts", "export const clean = true;\n", "clean change");
 
 		// Modify shared.txt on main to create conflict
 		fs.writeFileSync(path.join(repoDir, "shared.txt"), "MAIN CONFLICT\nline 2\nline 3\n");
@@ -321,13 +283,7 @@ describe("mergeAllThreads", () => {
 			"BRANCH VALUE\nline 2\nline 3\n",
 			"conflict on branch",
 		);
-		createBranchWithChange(
-			repoDir,
-			"swarm/clean-second",
-			"other.ts",
-			"export const other = true;\n",
-			"other change",
-		);
+		createBranchWithChange(repoDir, "swarm/clean-second", "other.ts", "export const other = true;\n", "other change");
 
 		// Create conflict on main
 		fs.writeFileSync(path.join(repoDir, "shared.txt"), "MAIN VALUE\nline 2\nline 3\n");
@@ -369,20 +325,8 @@ describe("mergeAllThreads", () => {
 		const repoDir = createTempRepo();
 		tempDirs.push(repoDir);
 
-		createBranchWithChange(
-			repoDir,
-			"swarm/late",
-			"late.ts",
-			"export const late = true;\n",
-			"late commit",
-		);
-		createBranchWithChange(
-			repoDir,
-			"swarm/early",
-			"early.ts",
-			"export const early = true;\n",
-			"early commit",
-		);
+		createBranchWithChange(repoDir, "swarm/late", "late.ts", "export const late = true;\n", "late commit");
+		createBranchWithChange(repoDir, "swarm/early", "early.ts", "export const early = true;\n", "early commit");
 
 		const threads = [
 			makeThread("late", "swarm/late", { completedAt: 5000 }),

@@ -7,15 +7,15 @@
  *   - Mock os.homedir() to a non-existent path so ~/.swarm/config.yaml never interferes
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock os.homedir to prevent ~/.swarm/config.yaml from interfering with tests.
 // vi.hoisted ensures the variable is available when vi.mock factory runs.
 const fakeHome = vi.hoisted(() =>
-	require("node:path").join(require("node:os").tmpdir(), "swarm-config-test-fakehome-" + process.pid)
+	require("node:path").join(require("node:os").tmpdir(), `swarm-config-test-fakehome-${process.pid}`),
 );
 vi.mock("node:os", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:os")>();
@@ -131,15 +131,7 @@ describe("YAML parsing via loadConfig", () => {
 
 	it("should skip comment lines", () => {
 		const dir = makeTempDir();
-		writeConfig(
-			dir,
-			[
-				"# This is a comment",
-				"max_iterations: 15",
-				"# Another comment",
-				"max_threads: 3",
-			].join("\n"),
-		);
+		writeConfig(dir, ["# This is a comment", "max_iterations: 15", "# Another comment", "max_threads: 3"].join("\n"));
 		const cfg = loadConfig(dir);
 		expect(cfg.max_iterations).toBe(15);
 		expect(cfg.max_threads).toBe(3);
@@ -147,17 +139,7 @@ describe("YAML parsing via loadConfig", () => {
 
 	it("should skip empty lines", () => {
 		const dir = makeTempDir();
-		writeConfig(
-			dir,
-			[
-				"",
-				"max_iterations: 12",
-				"",
-				"",
-				"max_threads: 7",
-				"",
-			].join("\n"),
-		);
+		writeConfig(dir, ["", "max_iterations: 12", "", "", "max_threads: 7", ""].join("\n"));
 		const cfg = loadConfig(dir);
 		expect(cfg.max_iterations).toBe(12);
 		expect(cfg.max_threads).toBe(7);
@@ -185,13 +167,7 @@ describe("YAML parsing via loadConfig", () => {
 
 	it("should skip lines without a colon", () => {
 		const dir = makeTempDir();
-		writeConfig(
-			dir,
-			[
-				"this line has no colon",
-				"max_iterations: 25",
-			].join("\n"),
-		);
+		writeConfig(dir, ["this line has no colon", "max_iterations: 25"].join("\n"));
 		const cfg = loadConfig(dir);
 		expect(cfg.max_iterations).toBe(25);
 	});
@@ -204,14 +180,7 @@ describe("YAML parsing via loadConfig", () => {
 describe("loadConfig() with cwd parameter", () => {
 	it("should load config from the provided cwd directory", () => {
 		const dir = makeTempDir();
-		writeConfig(
-			dir,
-			[
-				"max_iterations: 77",
-				"max_threads: 12",
-				"default_agent: aider",
-			].join("\n"),
-		);
+		writeConfig(dir, ["max_iterations: 77", "max_threads: 12", "default_agent: aider"].join("\n"));
 		const cfg = loadConfig(dir);
 		expect(cfg.max_iterations).toBe(77);
 		expect(cfg.max_threads).toBe(12);
@@ -676,14 +645,7 @@ describe("Edge cases", () => {
 
 	it("should handle config file with only comments", () => {
 		const dir = makeTempDir();
-		writeConfig(
-			dir,
-			[
-				"# comment 1",
-				"# comment 2",
-				"# comment 3",
-			].join("\n"),
-		);
+		writeConfig(dir, ["# comment 1", "# comment 2", "# comment 3"].join("\n"));
 		const cfg = loadConfig(dir);
 		expect(cfg.max_iterations).toBe(20);
 		expect(cfg.compression_strategy).toBe("structured");

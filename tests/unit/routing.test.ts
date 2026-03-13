@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FailureRecord } from "../../src/routing/model-router.js";
 import {
+	AGENT_CAPABILITIES,
 	classifyTaskComplexity,
 	classifyTaskSlot,
 	extractFileExtensions,
 	FailureTracker,
-	AGENT_CAPABILITIES,
 } from "../../src/routing/model-router.js";
-import type { TaskComplexity, TaskSlot, FailureRecord } from "../../src/routing/model-router.js";
 
 // ── classifyTaskComplexity ─────────────────────────────────────────────────
 
@@ -120,12 +120,8 @@ describe("extractFileExtensions", () => {
 	});
 
 	it("handles many different extensions in one task", () => {
-		const result = extractFileExtensions(
-			"update index.html, style.css, app.js, server.py, and config.json",
-		);
-		expect(result).toEqual(
-			expect.arrayContaining([".html", ".css", ".js", ".py", ".json"]),
-		);
+		const result = extractFileExtensions("update index.html, style.css, app.js, server.py, and config.json");
+		expect(result).toEqual(expect.arrayContaining([".html", ".css", ".js", ".py", ".json"]));
 		expect(result).toHaveLength(5);
 	});
 
@@ -246,7 +242,7 @@ describe("FailureTracker", () => {
 			expect(tracker.getFailures()[0].isTransient).toBe(false);
 		});
 
-		it('classifies generic errors as permanent', () => {
+		it("classifies generic errors as permanent", () => {
 			tracker.recordFailure("opencode", "gpt-4", "task", "unknown error occurred");
 			expect(tracker.getFailures()[0].isTransient).toBe(false);
 		});
@@ -372,12 +368,12 @@ describe("AGENT_CAPABILITIES", () => {
 	});
 
 	it("opencode has expected strengths", () => {
-		expect(AGENT_CAPABILITIES["opencode"].strengths).toContain("general-purpose");
-		expect(AGENT_CAPABILITIES["opencode"].strengths).toContain("fast");
+		expect(AGENT_CAPABILITIES.opencode.strengths).toContain("general-purpose");
+		expect(AGENT_CAPABILITIES.opencode.strengths).toContain("fast");
 	});
 
 	it("aider is the cheapest (lowest costTier)", () => {
-		const aiderCost = AGENT_CAPABILITIES["aider"].costTier;
+		const aiderCost = AGENT_CAPABILITIES.aider.costTier;
 		for (const agent of expectedAgents) {
 			expect(AGENT_CAPABILITIES[agent].costTier).toBeGreaterThanOrEqual(aiderCost);
 		}

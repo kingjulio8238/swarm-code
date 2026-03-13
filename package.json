@@ -23,6 +23,9 @@
     "bench:longbench": "tsx benchmarks/longbench_narrativeqa.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "biome check src/ tests/",
+    "lint:fix": "biome check --fix src/ tests/",
+    "format:check": "biome format --check src/ tests/",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -50,6 +53,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.7",
     "esbuild": "^0.27.3",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

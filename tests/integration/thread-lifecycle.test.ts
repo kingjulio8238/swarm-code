@@ -7,14 +7,14 @@
  * Covers: spawn, tracking, budget, cache hits, failure, and cancellation.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createTempGitRepo, cleanupTempRepo, getTestConfig } from "../fixtures/helpers.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cleanupTempRepo, createTempGitRepo, getTestConfig } from "../fixtures/helpers.js";
 
 // Register mock agent before importing ThreadManager
 import "../../src/agents/mock.js";
 
-import { ThreadManager } from "../../src/threads/manager.js";
 import type { ThreadConfig } from "../../src/core/types.js";
+import { ThreadManager } from "../../src/threads/manager.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -54,9 +54,7 @@ describe("ThreadManager lifecycle", () => {
 	// ── 1. Basic lifecycle ──────────────────────────────────────────────────
 
 	it("spawnThread succeeds and returns CompressedResult with success:true", async () => {
-		const result = await tm.spawnThread(
-			makeThreadConfig({ id: "lifecycle-ok", task: "add hello function" }),
-		);
+		const result = await tm.spawnThread(makeThreadConfig({ id: "lifecycle-ok", task: "add hello function" }));
 
 		expect(result.success).toBe(true);
 		expect(result.summary).toContain("SUCCESS");
@@ -94,9 +92,7 @@ describe("ThreadManager lifecycle", () => {
 		const budgetBefore = tm.getBudgetState();
 		expect(budgetBefore.totalSpentUsd).toBe(0);
 
-		await tm.spawnThread(
-			makeThreadConfig({ id: "budget-1", task: "do something" }),
-		);
+		await tm.spawnThread(makeThreadConfig({ id: "budget-1", task: "do something" }));
 
 		const budgetAfter = tm.getBudgetState();
 		expect(budgetAfter.totalSpentUsd).toBeGreaterThan(0);
@@ -164,9 +160,7 @@ describe("ThreadManager lifecycle", () => {
 
 	it("cancelThread returns true for running thread, false for completed", async () => {
 		// Completed thread: cancelThread should return false (no abort controller left)
-		await tm.spawnThread(
-			makeThreadConfig({ id: "cancel-done", task: "quick task" }),
-		);
+		await tm.spawnThread(makeThreadConfig({ id: "cancel-done", task: "quick task" }));
 		const cancelDone = tm.cancelThread("cancel-done");
 		expect(cancelDone).toBe(false);
 
@@ -188,9 +182,7 @@ describe("ThreadManager lifecycle", () => {
 		// Abort before spawning so the thread fails immediately
 		ac.abort();
 
-		const result = await tmCancel.spawnThread(
-			makeThreadConfig({ id: "cancel-all-1", task: "should be aborted" }),
-		);
+		const result = await tmCancel.spawnThread(makeThreadConfig({ id: "cancel-all-1", task: "should be aborted" }));
 
 		expect(result.success).toBe(false);
 		expect(result.summary.toLowerCase()).toContain("abort");
@@ -203,18 +195,12 @@ describe("ThreadManager lifecycle", () => {
 	it("onThreadProgress callback is called during thread lifecycle", async () => {
 		const phases: string[] = [];
 		const config = getTestConfig({ thread_retries: 0 });
-		const tmProgress = new ThreadManager(
-			repoDir,
-			config,
-			(_threadId, phase) => {
-				phases.push(phase);
-			},
-		);
+		const tmProgress = new ThreadManager(repoDir, config, (_threadId, phase) => {
+			phases.push(phase);
+		});
 		await tmProgress.init();
 
-		await tmProgress.spawnThread(
-			makeThreadConfig({ id: "progress-1", task: "tracked task" }),
-		);
+		await tmProgress.spawnThread(makeThreadConfig({ id: "progress-1", task: "tracked task" }));
 
 		// Should have progressed through at least queued -> agent_running -> completed
 		expect(phases.length).toBeGreaterThanOrEqual(2);

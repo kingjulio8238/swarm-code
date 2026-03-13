@@ -21,8 +21,8 @@ import {
 	type TextContent,
 	type UserMessage,
 } from "@mariozechner/pi-ai";
-import type { ExecResult, PythonRepl, ThreadHandler, MergeHandler } from "./repl.js";
-import { loadConfig, type SwarmConfig } from "../config.js";
+import { loadConfig } from "../config.js";
+import type { ExecResult, MergeHandler, PythonRepl, ThreadHandler } from "./repl.js";
 
 // ── Load config ─────────────────────────────────────────────────────────────
 
@@ -219,8 +219,8 @@ function extractCodeFromResponse(response: AssistantMessage): string | null {
 			!trimmed.startsWith("#") &&
 			(trimmed.includes("print(") ||
 				trimmed.includes("import ") ||
-				trimmed.includes("for ") && trimmed.includes(":") ||
-				trimmed.includes("def ") && trimmed.includes(":") ||
+				(trimmed.includes("for ") && trimmed.includes(":")) ||
+				(trimmed.includes("def ") && trimmed.includes(":")) ||
 				trimmed.includes("FINAL(") ||
 				trimmed.includes("llm_query(") ||
 				trimmed.includes("thread(") ||
@@ -245,9 +245,17 @@ function truncateOutput(text: string): string {
 
 export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 	const {
-		context, query, model, repl, signal,
-		onProgress, onSubQueryStart, onSubQuery,
-		systemPrompt, threadHandler, mergeHandler,
+		context,
+		query,
+		model,
+		repl,
+		signal,
+		onProgress,
+		onSubQueryStart,
+		onSubQuery,
+		systemPrompt,
+		threadHandler,
+		mergeHandler,
 	} = options;
 
 	let totalSubQueries = 0;
@@ -331,13 +339,8 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 			return { answer: "[Aborted]", iterations: iteration, totalSubQueries, completed: false };
 		}
 
-		const lastUserMsg = conversationHistory
-			.filter((m) => m.role === "user")
-			.at(-1);
-		const userMsgText =
-			typeof lastUserMsg?.content === "string"
-				? lastUserMsg.content
-				: "";
+		const lastUserMsg = conversationHistory.filter((m) => m.role === "user").at(-1);
+		const userMsgText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
 
 		onProgress?.({
 			iteration,
@@ -378,8 +381,10 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 		if ("errorMessage" in response && response.errorMessage) {
 			const errMsg = response.errorMessage as string;
 			const isAuth = errMsg.includes("authentication") || errMsg.includes("401");
-			const isQuota = errMsg.includes("quota") || errMsg.includes("billing") || errMsg.includes("429") || errMsg.includes("rate");
-			const isServer = errMsg.includes("500") || errMsg.includes("502") || errMsg.includes("503") || errMsg.includes("overloaded");
+			const isQuota =
+				errMsg.includes("quota") || errMsg.includes("billing") || errMsg.includes("429") || errMsg.includes("rate");
+			const isServer =
+				errMsg.includes("500") || errMsg.includes("502") || errMsg.includes("503") || errMsg.includes("overloaded");
 
 			if (isAuth) {
 				return {
@@ -458,7 +463,12 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 					await repl.start(signal);
 					await initRepl();
 				} catch {
-					return { answer: "[REPL crashed and could not restart]", iterations: iteration, totalSubQueries, completed: false };
+					return {
+						answer: "[REPL crashed and could not restart]",
+						iterations: iteration,
+						totalSubQueries,
+						completed: false,
+					};
 				}
 			}
 

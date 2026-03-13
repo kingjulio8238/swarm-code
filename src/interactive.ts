@@ -10,10 +10,10 @@
 
 import "./env.js";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import * as readline from "node:readline";
+import * as path from "node:path";
 import { stdin, stdout } from "node:process";
+import * as readline from "node:readline";
 
 // Global error handlers — prevent raw stack traces from leaking to terminal
 process.on("uncaughtException", (err) => {
@@ -31,7 +31,7 @@ const { runRlmLoop } = await import("./core/rlm.js");
 const { loadConfig } = await import("./config.js");
 
 import type { Api, Model } from "@mariozechner/pi-ai";
-import type { RlmProgress, SubQueryStartInfo, SubQueryInfo } from "./core/rlm.js";
+import type { RlmProgress, SubQueryInfo, SubQueryStartInfo } from "./core/rlm.js";
 
 const config = loadConfig();
 
@@ -88,9 +88,7 @@ class Spinner {
 	private render(): void {
 		const frame = SPINNER_FRAMES[this.frameIndex % SPINNER_FRAMES.length];
 		const elapsed = ((Date.now() - this.startTime) / 1000).toFixed(1);
-		process.stdout.write(
-			`${c.clearLine}    ${c.cyan}${frame}${c.reset} ${this.message} ${c.dim}${elapsed}s${c.reset}`
-		);
+		process.stdout.write(`${c.clearLine}    ${c.cyan}${frame}${c.reset} ${this.message} ${c.dim}${elapsed}s${c.reset}`);
 		this.frameIndex++;
 	}
 }
@@ -100,7 +98,7 @@ class Spinner {
 const DEFAULT_MODEL = process.env.RLM_MODEL || "claude-sonnet-4-6";
 const RLM_HOME = path.join(os.homedir(), ".rlm");
 const TRAJ_DIR = path.join(RLM_HOME, "trajectories");
-let W = Math.min(process.stdout.columns || 80, 100);
+let _W = Math.min(process.stdout.columns || 80, 100);
 
 // ── Session state ───────────────────────────────────────────────────────────
 
@@ -205,7 +203,11 @@ function getDefaultModelForProvider(provider: string): string | undefined {
 
 /** Wrap rl.question with ESC-to-cancel. Returns user input, empty string, or null on ESC.
  *  When secret=true, suppresses character echo (for API keys). */
-function questionWithEsc(rlInstance: readline.Interface, promptText: string, opts?: { secret?: boolean }): Promise<string | null> {
+function questionWithEsc(
+	rlInstance: readline.Interface,
+	promptText: string,
+	opts?: { secret?: boolean },
+): Promise<string | null> {
 	return new Promise((resolve) => {
 		let escaped = false;
 		const rlAny = rlInstance as any;
@@ -214,7 +216,7 @@ function questionWithEsc(rlInstance: readline.Interface, promptText: string, opt
 		if (opts?.secret) {
 			// Suppress readline's echo — write prompt ourselves, hide typed chars
 			savedWrite = rlAny._writeToOutput;
-			rlAny._writeToOutput = function () {};
+			rlAny._writeToOutput = () => {};
 			process.stdout.write(promptText);
 		}
 
@@ -243,7 +245,7 @@ function questionWithEsc(rlInstance: readline.Interface, promptText: string, opt
  *  Returns true (got key / already set), false (empty input), or null (ESC pressed). */
 async function promptForProviderKey(
 	rlInstance: readline.Interface,
-	providerInfo: { name: string; env: string }
+	providerInfo: { name: string; env: string },
 ): Promise<boolean | null> {
 	if (process.env[providerInfo.env]) return true;
 
@@ -264,16 +266,23 @@ async function promptForProviderKey(
 		// Remove existing entry for this key to avoid duplicates
 		if (fs.existsSync(credPath)) {
 			const existing = fs.readFileSync(credPath, "utf-8");
-			const filtered = existing.split("\n").filter((l) => {
-				const t = l.trim();
-				if (t.startsWith("export ")) return !t.slice(7).startsWith(providerInfo.env + "=");
-				return !t.startsWith(providerInfo.env + "=");
-			}).join("\n");
-			fs.writeFileSync(credPath, filtered.endsWith("\n") ? filtered : filtered + "\n");
+			const filtered = existing
+				.split("\n")
+				.filter((l) => {
+					const t = l.trim();
+					if (t.startsWith("export ")) return !t.slice(7).startsWith(`${providerInfo.env}=`);
+					return !t.startsWith(`${providerInfo.env}=`);
+				})
+				.join("\n");
+			fs.writeFileSync(credPath, filtered.endsWith("\n") ? filtered : `${filtered}\n`);
 		}
 		fs.appendFileSync(credPath, `${providerInfo.env}=${key}\n`);
 		// Restrict permissions (owner-only read/write)
-		try { fs.chmodSync(credPath, 0o600); } catch { /* Windows etc. */ }
+		try {
+			fs.chmodSync(credPath, 0o600);
+		} catch {
+			/* Windows etc. */
+		}
 		console.log(`\n  ${c.green}✓${c.reset} ${providerInfo.name} key saved to ${c.dim}~/.rlm/credentials${c.reset}`);
 	} catch {
 		console.log(`\n  ${c.yellow}!${c.reset} Could not save key. Add manually:`);
@@ -290,16 +299,23 @@ function saveModelPreference(modelId: string): void {
 		// Remove existing RLM_MODEL entry
 		if (fs.existsSync(credPath)) {
 			const existing = fs.readFileSync(credPath, "utf-8");
-			const filtered = existing.split("\n").filter((l) => {
-				const t = l.trim();
-				if (t.startsWith("export ")) return !t.slice(7).startsWith("RLM_MODEL=");
-				return !t.startsWith("RLM_MODEL=");
-			}).join("\n");
-			fs.writeFileSync(credPath, filtered.endsWith("\n") ? filtered : filtered + "\n");
+			const filtered = existing
+				.split("\n")
+				.filter((l) => {
+					const t = l.trim();
+					if (t.startsWith("export ")) return !t.slice(7).startsWith("RLM_MODEL=");
+					return !t.startsWith("RLM_MODEL=");
+				})
+				.join("\n");
+			fs.writeFileSync(credPath, filtered.endsWith("\n") ? filtered : `${filtered}\n`);
 		}
 		fs.appendFileSync(credPath, `RLM_MODEL=${modelId}\n`);
-		try { fs.chmodSync(credPath, 0o600); } catch {}
-	} catch { /* best-effort */ }
+		try {
+			fs.chmodSync(credPath, 0o600);
+		} catch {}
+	} catch {
+		/* best-effort */
+	}
 }
 
 /** Find the SETUP_PROVIDERS entry that owns a given pi-ai provider name. */
@@ -317,7 +333,9 @@ function handleMultiLineAsContext(input: string): { context: string; query: stri
 	const lines = input.split("\n");
 	if (lines.length > 3) {
 		const sizeKB = (input.length / 1024).toFixed(1);
-		console.log(`  ${c.green}✓${c.reset} Pasted ${c.bold}${lines.length} lines${c.reset} ${c.dim}(${sizeKB}KB)${c.reset}`);
+		console.log(
+			`  ${c.green}✓${c.reset} Pasted ${c.bold}${lines.length} lines${c.reset} ${c.dim}(${sizeKB}KB)${c.reset}`,
+		);
 		return { context: input, query: "" };
 	}
 	return null;
@@ -343,15 +361,13 @@ ${c.dim}         Recursive Language Models — arXiv:2512.24601${c.reset}
 
 function printStatusLine(): void {
 	const provider = currentProviderName || detectProvider();
-	const modelShort = currentModelId.length > 35
-		? currentModelId.slice(0, 32) + "..."
-		: currentModelId;
+	const modelShort = currentModelId.length > 35 ? `${currentModelId.slice(0, 32)}...` : currentModelId;
 	const ctx = contextText
 		? `${c.green}●${c.reset} ${(contextText.length / 1024).toFixed(1)}KB${contextSource ? ` ${c.dim}(${contextSource})${c.reset}` : ""}`
 		: `${c.dim}○${c.reset}`;
 
 	console.log(
-		`  ${c.dim}${modelShort}${c.reset} ${c.dim}(${provider})${c.reset}  ${ctx}  ${c.dim}Q:${queryCount}${c.reset}`
+		`  ${c.dim}${modelShort}${c.reset} ${c.dim}(${provider})${c.reset}  ${ctx}  ${c.dim}Q:${queryCount}${c.reset}`,
 	);
 }
 
@@ -361,20 +377,25 @@ function printStatusLine(): void {
 function generateDirTree(dir: string, prefix = "", depth = 0, maxDepth = 2): string {
 	if (depth > maxDepth) return "";
 	let entries: fs.Dirent[];
-	try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
-	catch { return ""; }
+	try {
+		entries = fs.readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return "";
+	}
 
 	// Filter and sort: dirs first, skip hidden/ignored
-	const filtered = entries.filter(e => {
-		if (e.name.startsWith(".") && e.name !== ".env") return false;
-		if (e.isDirectory() && SKIP_DIRS.has(e.name)) return false;
-		if (e.isSymbolicLink()) return false;
-		if (e.isFile() && isBinaryFile(path.join(dir, e.name))) return false;
-		return true;
-	}).sort((a, b) => {
-		if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-		return a.name.localeCompare(b.name);
-	});
+	const filtered = entries
+		.filter((e) => {
+			if (e.name.startsWith(".") && e.name !== ".env") return false;
+			if (e.isDirectory() && SKIP_DIRS.has(e.name)) return false;
+			if (e.isSymbolicLink()) return false;
+			if (e.isFile() && isBinaryFile(path.join(dir, e.name))) return false;
+			return true;
+		})
+		.sort((a, b) => {
+			if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+			return a.name.localeCompare(b.name);
+		});
 
 	// Cap entries per level to keep it concise
 	const MAX_PER_LEVEL = 25;
@@ -415,7 +436,9 @@ function printWelcome(): void {
 	const cwdShort = process.cwd().replace(os.homedir(), "~");
 	console.log(`  ${c.dim}${cwdShort}${c.reset}`);
 	printStatusLine();
-	console.log(`  ${c.dim}max ${config.max_iterations} iters · ${config.max_sub_queries} sub-queries · /help${c.reset}\n`);
+	console.log(
+		`  ${c.dim}max ${config.max_iterations} iters · ${config.max_sub_queries} sub-queries · /help${c.reset}\n`,
+	);
 }
 
 // ── Help ────────────────────────────────────────────────────────────────────
@@ -474,7 +497,7 @@ function looksLikePath(token: string): boolean {
 	return false;
 }
 
-async function handleFile(arg: string): Promise<string | void> {
+async function handleFile(arg: string): Promise<string | undefined> {
 	if (!arg) {
 		console.log(`  ${c.red}Usage: /file <path> [query]${c.reset}`);
 		console.log(`  ${c.dim}Examples: /file src/main.ts  |  /file src/  |  /file src/**/*.ts${c.reset}`);
@@ -513,7 +536,7 @@ async function handleFile(arg: string): Promise<string | void> {
 			contextSource = path.relative(process.cwd(), filePaths[0]) || filePaths[0];
 			const lines = contextText.split("\n").length;
 			console.log(
-				`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines.toLocaleString()} lines) from ${c.underline}${contextSource}${c.reset}`
+				`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines.toLocaleString()} lines) from ${c.underline}${contextSource}${c.reset}`,
 			);
 		} catch (err: any) {
 			console.log(`  ${c.red}Could not read file: ${err.message}${c.reset}`);
@@ -523,7 +546,7 @@ async function handleFile(arg: string): Promise<string | void> {
 		contextText = text;
 		contextSource = `${count} files`;
 		console.log(
-			`  ${c.green}✓${c.reset} Loaded ${c.bold}${count}${c.reset} files (${(totalBytes / 1024).toFixed(1)}KB total)`
+			`  ${c.green}✓${c.reset} Loaded ${c.bold}${count}${c.reset} files (${(totalBytes / 1024).toFixed(1)}KB total)`,
 		);
 		// Show file list
 		for (const fp of filePaths.slice(0, 20)) {
@@ -549,7 +572,7 @@ async function handleUrl(arg: string): Promise<void> {
 		contextSource = arg;
 		const lines = contextText.split("\n").length;
 		console.log(
-			`  ${c.green}✓${c.reset} Fetched ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines.toLocaleString()} lines)`
+			`  ${c.green}✓${c.reset} Fetched ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines.toLocaleString()} lines)`,
 		);
 	} catch (err: any) {
 		console.log(`  ${c.red}Failed: ${err.message}${c.reset}`);
@@ -558,7 +581,9 @@ async function handleUrl(arg: string): Promise<void> {
 
 function handlePaste(rl: readline.Interface): Promise<void> {
 	return new Promise((resolve) => {
-		console.log(`  ${c.dim}Paste your context below. Type ${c.bold}EOF${c.reset}${c.dim} on an empty line to finish.${c.reset}`);
+		console.log(
+			`  ${c.dim}Paste your context below. Type ${c.bold}EOF${c.reset}${c.dim} on an empty line to finish.${c.reset}`,
+		);
 		const lines: string[] = [];
 		const onLine = (line: string) => {
 			if (line.trim() === "EOF") {
@@ -566,7 +591,7 @@ function handlePaste(rl: readline.Interface): Promise<void> {
 				contextText = lines.join("\n");
 				contextSource = "(pasted)";
 				console.log(
-					`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines.length} lines) from paste`
+					`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines.length} lines) from paste`,
 				);
 				resolve();
 				return;
@@ -584,7 +609,9 @@ function handleContext(): void {
 	}
 	const lines = contextText.split("\n").length;
 	const sizeKB = (contextText.length / 1024).toFixed(1);
-	console.log(`  ${c.bold}Context:${c.reset} ${contextText.length.toLocaleString()} chars (${sizeKB}KB), ${lines.toLocaleString()} lines`);
+	console.log(
+		`  ${c.bold}Context:${c.reset} ${contextText.length.toLocaleString()} chars (${sizeKB}KB), ${lines.toLocaleString()} lines`,
+	);
 	console.log(`  ${c.bold}Source:${c.reset}  ${contextSource}`);
 
 	// For multi-file context, extract and display individual file paths
@@ -644,7 +671,7 @@ let MAX_CONTENT_W = BOX_W - 4;
 
 // Update dimensions on terminal resize
 process.stdout.on("resize", () => {
-	W = Math.min(process.stdout.columns || 80, 100);
+	_W = Math.min(process.stdout.columns || 80, 100);
 	BOX_W = Math.min(process.stdout.columns || 80, 96) - 4;
 	MAX_CONTENT_W = BOX_W - 4;
 });
@@ -695,9 +722,7 @@ function displayCode(code: string): void {
 	for (let i = 0; i < lines.length; i++) {
 		const wrapped = wrapText(lines[i], codeMaxW);
 		for (let j = 0; j < wrapped.length; j++) {
-			const prefix = j === 0
-				? `${c.dim}${String(i + 1).padStart(lineNumWidth)}${c.reset}`
-				: " ".repeat(lineNumWidth);
+			const prefix = j === 0 ? `${c.dim}${String(i + 1).padStart(lineNumWidth)}${c.reset}` : " ".repeat(lineNumWidth);
 			console.log(boxLine(`${prefix} ${c.cyan}${wrapped[j]}${c.reset}`, c.cyan));
 		}
 	}
@@ -705,7 +730,7 @@ function displayCode(code: string): void {
 }
 
 function displayOutput(output: string): void {
-	const lines = output.split("\n").filter(l => l.trim() !== "");
+	const lines = output.split("\n").filter((l) => l.trim() !== "");
 	if (lines.length === 0) return;
 
 	console.log(boxTop("Output", c.green));
@@ -718,7 +743,7 @@ function displayOutput(output: string): void {
 }
 
 function displayError(stderr: string): void {
-	const lines = stderr.split("\n").filter(l => l.trim() !== "");
+	const lines = stderr.split("\n").filter((l) => l.trim() !== "");
 	if (lines.length === 0) return;
 
 	console.log(boxTop("Error", c.red));
@@ -731,7 +756,7 @@ function displayError(stderr: string): void {
 }
 
 function showErrorMsg(msg: string): void {
-	const lines = msg.split(/\n/).filter(l => l.trim());
+	const lines = msg.split(/\n/).filter((l) => l.trim());
 	console.log(boxTop("Error", c.red));
 	for (const line of lines) {
 		for (const chunk of wrapText(line, MAX_CONTENT_W)) {
@@ -746,9 +771,14 @@ function formatSize(chars: number): string {
 }
 
 function displaySubQueryStart(info: SubQueryStartInfo): void {
-	console.log(boxTop(`${c.magenta}Sub-query #${info.index}${c.reset}  ${c.dim}${formatSize(info.contextLength)} chars`, c.magenta));
+	console.log(
+		boxTop(
+			`${c.magenta}Sub-query #${info.index}${c.reset}  ${c.dim}${formatSize(info.contextLength)} chars`,
+			c.magenta,
+		),
+	);
 
-	const instrLines = info.instruction.split("\n").filter(l => l.trim());
+	const instrLines = info.instruction.split("\n").filter((l) => l.trim());
 	for (const line of instrLines) {
 		for (const chunk of wrapText(line, MAX_CONTENT_W)) {
 			console.log(boxLine(`${c.dim}${chunk}${c.reset}`, c.magenta));
@@ -776,21 +806,21 @@ function displaySubQueryResult(info: SubQueryInfo): void {
 /** Filter out deprecated, retired, and non-chat models (Feb 2026). */
 const EXCLUDED_MODEL_PATTERNS = [
 	// ── Anthropic retired / old gen ──
-	/^claude-3-/,                // all claude 3.x retired (haiku, sonnet, opus, 3-5-*, 3-7-*)
+	/^claude-3-/, // all claude 3.x retired (haiku, sonnet, opus, 3-5-*, 3-7-*)
 	// ── OpenAI legacy / specialized ──
-	/^gpt-4$/,                   // superseded by gpt-4.1
-	/^gpt-4-turbo/,              // superseded by gpt-4.1
-	/^gpt-4o-2024-/,             // dated snapshots
-	/-chat-latest$/,             // chat variants (use base model)
-	/^codex-/,                   // code-only
-	/-codex/,                    // all codex variants
+	/^gpt-4$/, // superseded by gpt-4.1
+	/^gpt-4-turbo/, // superseded by gpt-4.1
+	/^gpt-4o-2024-/, // dated snapshots
+	/-chat-latest$/, // chat variants (use base model)
+	/^codex-/, // code-only
+	/-codex/, // all codex variants
 	// ── Google retired / deprecated ──
-	/^gemini-1\.5-/,             // all 1.5 retired
-	/^gemini-3-pro-preview$/,    // deprecated, shuts down Mar 9, 2026
-	/^gemini-live-/,             // real-time streaming, not standard chat
+	/^gemini-1\.5-/, // all 1.5 retired
+	/^gemini-3-pro-preview$/, // deprecated, shuts down Mar 9, 2026
+	/^gemini-live-/, // real-time streaming, not standard chat
 	// ── Dated snapshots / previews ──
-	/preview-\d{2}-\d{2}$/,      // e.g. preview-04-17
-	/preview-\d{2}-\d{4}$/,      // e.g. preview-09-2025
+	/preview-\d{2}-\d{2}$/, // e.g. preview-04-17
+	/preview-\d{2}-\d{4}$/, // e.g. preview-09-2025
 	/^labs-/,
 	/-customtools$/,
 	/deep-research$/,
@@ -801,7 +831,7 @@ function isModelExcluded(modelId: string): boolean {
 }
 
 /** Collect models from providers that have an API key set. */
-function getAvailableModels(): { id: string; provider: string }[] {
+function _getAvailableModels(): { id: string; provider: string }[] {
 	const items: { id: string; provider: string }[] = [];
 	for (const provider of getProviders()) {
 		if (!process.env[providerEnvKey(provider)]) continue;
@@ -826,8 +856,8 @@ function getModelsForProvider(providerName: string): { id: string; provider: str
 
 // ── Truncate helper ─────────────────────────────────────────────────────────
 
-function truncateStr(text: string, max: number): string {
-	return text.length <= max ? text : text.slice(0, max - 3) + "...";
+function _truncateStr(text: string, max: number): string {
+	return text.length <= max ? text : `${text.slice(0, max - 3)}...`;
 }
 
 // ── Multi-file context loading ──────────────────────────────────────────────
@@ -853,21 +883,74 @@ async function safeFetch(url: string): Promise<string> {
 }
 
 const BINARY_EXTENSIONS = new Set([
-	".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg",
-	".mp3", ".mp4", ".wav", ".ogg", ".flac", ".avi", ".mov", ".mkv",
-	".zip", ".gz", ".tar", ".bz2", ".7z", ".rar", ".xz",
-	".exe", ".dll", ".so", ".dylib", ".bin", ".o", ".a",
-	".woff", ".woff2", ".ttf", ".otf", ".eot",
-	".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-	".pyc", ".pyo", ".class", ".jar",
-	".db", ".sqlite", ".sqlite3",
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".bmp",
+	".ico",
+	".webp",
+	".svg",
+	".mp3",
+	".mp4",
+	".wav",
+	".ogg",
+	".flac",
+	".avi",
+	".mov",
+	".mkv",
+	".zip",
+	".gz",
+	".tar",
+	".bz2",
+	".7z",
+	".rar",
+	".xz",
+	".exe",
+	".dll",
+	".so",
+	".dylib",
+	".bin",
+	".o",
+	".a",
+	".woff",
+	".woff2",
+	".ttf",
+	".otf",
+	".eot",
+	".pdf",
+	".doc",
+	".docx",
+	".xls",
+	".xlsx",
+	".ppt",
+	".pptx",
+	".pyc",
+	".pyo",
+	".class",
+	".jar",
+	".db",
+	".sqlite",
+	".sqlite3",
 	".DS_Store",
 ]);
 
 const SKIP_DIRS = new Set([
-	"node_modules", ".git", "dist", "build", "__pycache__", ".venv",
-	"venv", ".next", ".nuxt", "coverage", ".cache", ".tsc-output",
-	".svelte-kit", "target", "out",
+	"node_modules",
+	".git",
+	"dist",
+	"build",
+	"__pycache__",
+	".venv",
+	"venv",
+	".next",
+	".nuxt",
+	"coverage",
+	".cache",
+	".tsc-output",
+	".svelte-kit",
+	"target",
+	"out",
 ]);
 
 function isBinaryFile(filePath: string): boolean {
@@ -882,8 +965,14 @@ function isBinaryFile(filePath: string): boolean {
 		for (let i = 0; i < bytesRead; i++) {
 			if (buf[i] === 0) return true;
 		}
-	} catch { /* unreadable → skip */ return true; }
-	finally { if (fd !== undefined) try { fs.closeSync(fd); } catch {} }
+	} catch {
+		/* unreadable → skip */ return true;
+	} finally {
+		if (fd !== undefined)
+			try {
+				fs.closeSync(fd);
+			} catch {}
+	}
 	return false;
 }
 
@@ -895,7 +984,9 @@ function walkDir(dir: string, depth = 0): string[] {
 	let entries: fs.Dirent[];
 	try {
 		entries = fs.readdirSync(dir, { withFileTypes: true });
-	} catch { return results; }
+	} catch {
+		return results;
+	}
 
 	for (const entry of entries) {
 		if (results.length >= MAX_FILES) break;
@@ -929,7 +1020,7 @@ function simpleGlobMatch(pattern: string, filePath: string, _braceDepth = 0): bo
 	if (braceMatch && _braceDepth < 5) {
 		const alternatives = braceMatch[1].split(",").slice(0, 50);
 		return alternatives.some((alt) =>
-			simpleGlobMatch(pattern.replace(braceMatch[0], alt.trim()), filePath, _braceDepth + 1)
+			simpleGlobMatch(pattern.replace(braceMatch[0], alt.trim()), filePath, _braceDepth + 1),
 		);
 	}
 
@@ -950,7 +1041,7 @@ function simpleGlobMatch(pattern: string, filePath: string, _braceDepth = 0): bo
 			regex += "[^/]";
 			i++;
 		} else if (".+^$|()[]\\".includes(ch)) {
-			regex += "\\" + ch;
+			regex += `\\${ch}`;
 			i++;
 		} else {
 			regex += ch;
@@ -979,7 +1070,10 @@ function resolveFileArgs(args: string[]): string[] {
 			// Find the base directory (portion before the first glob char)
 			const normalized = toForwardSlash(arg);
 			const firstGlob = normalized.search(/[*?{]/);
-			const baseDir = firstGlob > 0 ? path.resolve(normalized.slice(0, normalized.lastIndexOf("/", firstGlob) + 1) || ".") : process.cwd();
+			const baseDir =
+				firstGlob > 0
+					? path.resolve(normalized.slice(0, normalized.lastIndexOf("/", firstGlob) + 1) || ".")
+					: process.cwd();
 			const allFiles = walkDir(baseDir);
 			for (const f of allFiles) {
 				const rel = path.relative(process.cwd(), f);
@@ -1020,13 +1114,17 @@ function loadMultipleFiles(filePaths: string[]): { text: string; count: number; 
 		try {
 			const content = fs.readFileSync(fp, "utf-8");
 			if (totalBytes + content.length > MAX_TOTAL_BYTES) {
-				console.log(`  ${c.yellow}⚠${c.reset} Size limit reached (${(MAX_TOTAL_BYTES / 1024 / 1024).toFixed(0)}MB). Loaded ${parts.length} of ${filePaths.length} files.`);
+				console.log(
+					`  ${c.yellow}⚠${c.reset} Size limit reached (${(MAX_TOTAL_BYTES / 1024 / 1024).toFixed(0)}MB). Loaded ${parts.length} of ${filePaths.length} files.`,
+				);
 				break;
 			}
 			const rel = path.relative(process.cwd(), fp);
 			parts.push(`=== ${rel} ===\n${content}`);
 			totalBytes += content.length;
-		} catch { /* skip unreadable */ }
+		} catch {
+			/* skip unreadable */
+		}
 	}
 
 	return { text: parts.join("\n\n"), count: parts.length, totalBytes };
@@ -1067,7 +1165,7 @@ async function runQuery(query: string): Promise<void> {
 	const spinner = new Spinner();
 
 	// ── RLM mode ─────────────────────────────────────────────────────────
-	let subQueryCount = 0;
+	let _subQueryCount = 0;
 	console.log(`\n  ${c.dim}${currentModelId} · ${(effectiveContext.length / 1024).toFixed(1)}KB context${c.reset}`);
 
 	// Trajectory bookkeeping
@@ -1119,7 +1217,9 @@ async function runQuery(query: string): Promise<void> {
 					};
 
 					const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-					console.log(`\n  ${c.bold}Step ${info.iteration}${c.reset}${c.dim}/${info.maxIterations}  ${elapsed}s elapsed${c.reset}`);
+					console.log(
+						`\n  ${c.bold}Step ${info.iteration}${c.reset}${c.dim}/${info.maxIterations}  ${elapsed}s elapsed${c.reset}`,
+					);
 					stepRule();
 					spinner.start("Generating code");
 				}
@@ -1165,7 +1265,7 @@ async function runQuery(query: string): Promise<void> {
 				spinner.start("");
 			},
 			onSubQuery: (info: SubQueryInfo) => {
-				subQueryCount++;
+				_subQueryCount++;
 				if (currentStep) {
 					currentStep.subQueries.push(info);
 				}
@@ -1226,13 +1326,16 @@ async function runQuery(query: string): Promise<void> {
 		activeAc = null;
 		activeRepl = null;
 		activeSpinner = null;
-		try { repl.shutdown(); } catch { /* already dead */ }
+		try {
+			repl.shutdown();
+		} catch {
+			/* already dead */
+		}
 		isRunning = false;
 	}
 }
 
 // ── @file shorthand and auto-detect file paths ─────────────────────────────
-
 
 function expandAtFiles(input: string): string {
 	// Extract all @tokens from input
@@ -1262,7 +1365,7 @@ function expandAtFiles(input: string): string {
 			contextSource = path.relative(process.cwd(), filePaths[0]) || filePaths[0];
 			const lines = contextText.split("\n").length;
 			console.log(
-				`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines} lines) from ${c.underline}${contextSource}${c.reset}`
+				`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines} lines) from ${c.underline}${contextSource}${c.reset}`,
 			);
 		} catch (err: any) {
 			console.log(`  ${c.red}Could not read file: ${err.message}${c.reset}`);
@@ -1274,7 +1377,7 @@ function expandAtFiles(input: string): string {
 		contextText = text;
 		contextSource = `${count} files`;
 		console.log(
-			`  ${c.green}✓${c.reset} Loaded ${c.bold}${count}${c.reset} files (${(totalBytes / 1024).toFixed(1)}KB total)`
+			`  ${c.green}✓${c.reset} Loaded ${c.bold}${count}${c.reset} files (${(totalBytes / 1024).toFixed(1)}KB total)`,
 		);
 	}
 
@@ -1293,7 +1396,7 @@ async function detectAndLoadUrl(input: string): Promise<boolean> {
 			contextSource = url;
 			const lines = contextText.split("\n").length;
 			console.log(
-				`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines} lines)`
+				`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines} lines)`,
 			);
 			return true;
 		} catch (err: any) {
@@ -1318,7 +1421,9 @@ async function interactive(): Promise<void> {
 		while (!setupDone) {
 			console.log(`  ${c.bold}Select your provider:${c.reset}\n`);
 			for (let i = 0; i < SETUP_PROVIDERS.length; i++) {
-				console.log(`  ${c.dim}${i + 1}${c.reset}  ${SETUP_PROVIDERS[i].name} ${c.dim}(${SETUP_PROVIDERS[i].label})${c.reset}`);
+				console.log(
+					`  ${c.dim}${i + 1}${c.reset}  ${SETUP_PROVIDERS[i].name} ${c.dim}(${SETUP_PROVIDERS[i].label})${c.reset}`,
+				);
 			}
 			console.log();
 
@@ -1330,7 +1435,7 @@ async function interactive(): Promise<void> {
 				process.exit(0);
 			}
 			const idx = parseInt(choice, 10) - 1;
-			if (isNaN(idx) || idx < 0 || idx >= SETUP_PROVIDERS.length) {
+			if (Number.isNaN(idx) || idx < 0 || idx >= SETUP_PROVIDERS.length) {
 				console.log(`\n  ${c.dim}Invalid choice.${c.reset}\n`);
 				continue;
 			}
@@ -1413,7 +1518,7 @@ async function interactive(): Promise<void> {
 	// Color slash commands cyan as the user types
 	const rlAny = rl as any;
 	const promptStr = rl.getPrompt();
-	rlAny._writeToOutput = function (str: string) {
+	rlAny._writeToOutput = (str: string) => {
 		if (!rlAny.line?.startsWith("/")) {
 			rlAny.output.write(str);
 			return;
@@ -1428,343 +1533,362 @@ async function interactive(): Promise<void> {
 	rl.prompt();
 
 	rl.on("line", async (rawLine: string) => {
-	  try {
-		if (isRunning) return; // ignore input while a query is active
-		const line = rawLine.trim();
+		try {
+			if (isRunning) return; // ignore input while a query is active
+			const line = rawLine.trim();
 
-		// URL auto-detect
-		if (line.startsWith("http://") || line.startsWith("https://")) {
-			const loaded = await detectAndLoadUrl(line);
-			if (loaded) {
-				printStatusLine();
-				console.log(`\n  ${c.dim}Now type your query...${c.reset}\n`);
-				rl.prompt();
-				return;
-			}
-		}
-
-		// Multi-line paste detect
-		if (isMultiLineInput(rawLine)) {
-			const result = handleMultiLineAsContext(rawLine);
-			if (result) {
-				contextText = result.context;
-				contextSource = "(pasted)";
-				printStatusLine();
-				console.log(`\n  ${c.dim}Now type your query...${c.reset}\n`);
-				rl.prompt();
-				return;
-			}
-		}
-
-		if (!line) {
-			rl.prompt();
-			return;
-		}
-
-		// Slash commands
-		if (line.startsWith("/")) {
-			const [cmd, ...rest] = line.slice(1).split(/\s+/);
-			const arg = rest.join(" ");
-
-			switch (cmd) {
-				case "help":
-				case "h":
-					printCommandHelp();
-					break;
-				case "file":
-				case "f": {
-					const fileQuery = await handleFile(arg);
-					if (fileQuery && contextText) {
-						await runQuery(fileQuery);
-						printStatusLine();
-					}
-					break;
+			// URL auto-detect
+			if (line.startsWith("http://") || line.startsWith("https://")) {
+				const loaded = await detectAndLoadUrl(line);
+				if (loaded) {
+					printStatusLine();
+					console.log(`\n  ${c.dim}Now type your query...${c.reset}\n`);
+					rl.prompt();
+					return;
 				}
-				case "url":
-				case "u":
-					await handleUrl(arg);
-					break;
-				case "paste":
-				case "p":
-					await handlePaste(rl);
-					break;
-				case "context":
-				case "ctx":
-					handleContext();
-					break;
-				case "clear-context":
-				case "cc":
-					contextText = "";
-					contextSource = "";
-					console.log(`  ${c.green}✓${c.reset} Context cleared.`);
-					break;
-				case "model":
-				case "m": {
-					const curProvider = currentProviderName || detectProvider();
-					if (arg) {
-						// Accept a number (from current provider list) or a model ID
-						const curModels = getModelsForProvider(curProvider);
-						let pick: string | undefined;
-						if (/^\d+$/.test(arg)) {
-							pick = curModels[parseInt(arg, 10) - 1]?.id;
-						} else {
-							pick = arg;
-						}
-						if (!pick) {
-							console.log(`  ${c.red}Invalid selection.${c.reset} Use ${c.cyan}/model${c.reset} to list available models.`);
-							break;
-						}
+			}
 
-						// Check if this model belongs to a different provider
-						const resolved = resolveModelWithProvider(pick);
-						if (!resolved) {
-							console.log(`  ${c.red}Model "${arg}" not found.${c.reset} Use ${c.cyan}/model${c.reset} to list available models.`);
-							break;
+			// Multi-line paste detect
+			if (isMultiLineInput(rawLine)) {
+				const result = handleMultiLineAsContext(rawLine);
+				if (result) {
+					contextText = result.context;
+					contextSource = "(pasted)";
+					printStatusLine();
+					console.log(`\n  ${c.dim}Now type your query...${c.reset}\n`);
+					rl.prompt();
+					return;
+				}
+			}
+
+			if (!line) {
+				rl.prompt();
+				return;
+			}
+
+			// Slash commands
+			if (line.startsWith("/")) {
+				const [cmd, ...rest] = line.slice(1).split(/\s+/);
+				const arg = rest.join(" ");
+
+				switch (cmd) {
+					case "help":
+					case "h":
+						printCommandHelp();
+						break;
+					case "file":
+					case "f": {
+						const fileQuery = await handleFile(arg);
+						if (fileQuery && contextText) {
+							await runQuery(fileQuery);
+							printStatusLine();
 						}
+						break;
+					}
+					case "url":
+					case "u":
+						await handleUrl(arg);
+						break;
+					case "paste":
+					case "p":
+						await handlePaste(rl);
+						break;
+					case "context":
+					case "ctx":
+						handleContext();
+						break;
+					case "clear-context":
+					case "cc":
+						contextText = "";
+						contextSource = "";
+						console.log(`  ${c.green}✓${c.reset} Context cleared.`);
+						break;
+					case "model":
+					case "m": {
+						const curProvider = currentProviderName || detectProvider();
+						if (arg) {
+							// Accept a number (from current provider list) or a model ID
+							const curModels = getModelsForProvider(curProvider);
+							let pick: string | undefined;
+							if (/^\d+$/.test(arg)) {
+								pick = curModels[parseInt(arg, 10) - 1]?.id;
+							} else {
+								pick = arg;
+							}
+							if (!pick) {
+								console.log(
+									`  ${c.red}Invalid selection.${c.reset} Use ${c.cyan}/model${c.reset} to list available models.`,
+								);
+								break;
+							}
 
-						if (resolved.provider !== curProvider) {
-							// Cross-provider switch
-							const setupInfo = findSetupProvider(resolved.provider);
-							const envVar = setupInfo?.env || providerEnvKey(resolved.provider);
-							const provName = setupInfo?.name || resolved.provider;
+							// Check if this model belongs to a different provider
+							const resolved = resolveModelWithProvider(pick);
+							if (!resolved) {
+								console.log(
+									`  ${c.red}Model "${arg}" not found.${c.reset} Use ${c.cyan}/model${c.reset} to list available models.`,
+								);
+								break;
+							}
 
-							if (!process.env[envVar]) {
-								console.log(`  ${c.yellow}That model requires ${provName}.${c.reset}`);
-								const gotKey = await promptForProviderKey(rl, { name: provName, env: envVar });
-								if (!gotKey) {
-									console.log(`  ${c.dim}Cancelled.${c.reset}`);
-									break;
+							if (resolved.provider !== curProvider) {
+								// Cross-provider switch
+								const setupInfo = findSetupProvider(resolved.provider);
+								const envVar = setupInfo?.env || providerEnvKey(resolved.provider);
+								const provName = setupInfo?.name || resolved.provider;
+
+								if (!process.env[envVar]) {
+									console.log(`  ${c.yellow}That model requires ${provName}.${c.reset}`);
+									const gotKey = await promptForProviderKey(rl, { name: provName, env: envVar });
+									if (!gotKey) {
+										console.log(`  ${c.dim}Cancelled.${c.reset}`);
+										break;
+									}
 								}
 							}
-						}
 
-						currentModelId = pick;
-						currentModel = resolved.model;
-						currentProviderName = resolved.provider;
-						saveModelPreference(currentModelId);
-						console.log(`  ${c.green}✓${c.reset} Switched to ${c.bold}${currentModelId}${c.reset}`);
-						console.log();
-						printStatusLine();
-					} else {
-						// List models for current provider
-						const models = getModelsForProvider(curProvider);
-						const provLabel = findSetupProvider(curProvider)?.name || curProvider;
-						console.log(`\n  ${c.bold}Current model:${c.reset} ${c.cyan}${currentModelId}${c.reset} ${c.dim}(${provLabel})${c.reset}\n`);
-						const pad = String(models.length).length;
-						for (let i = 0; i < models.length; i++) {
-							const m = models[i];
-							const num = String(i + 1).padStart(pad);
-							const dot = m.id === currentModelId ? `${c.green}●${c.reset}` : ` `;
-							const label = m.id === currentModelId
-								? `${c.cyan}${m.id}${c.reset}`
-								: `${c.dim}${m.id}${c.reset}`;
-							console.log(`  ${c.dim}${num}${c.reset} ${dot} ${label}`);
-						}
-						console.log(`\n  ${c.dim}${models.length} models · scroll up to see full list.${c.reset}`);
-						console.log(`  ${c.dim}Type${c.reset} ${c.cyan}/model <number>${c.reset} ${c.dim}or${c.reset} ${c.cyan}/model <id>${c.reset} ${c.dim}to switch.${c.reset}`);
-						console.log(`  ${c.dim}Type${c.reset} ${c.cyan}/provider${c.reset} ${c.dim}to switch provider.${c.reset}`);
-					}
-					break;
-				}
-				case "provider":
-				case "prov": {
-					const curProvider = currentProviderName || detectProvider();
-					const curLabel = findSetupProvider(curProvider)?.name || curProvider;
-					console.log(`\n  ${c.bold}Current provider:${c.reset} ${c.cyan}${curLabel}${c.reset}\n`);
-
-					for (let i = 0; i < SETUP_PROVIDERS.length; i++) {
-						const p = SETUP_PROVIDERS[i];
-						const isCurrent = p.piProvider === curProvider;
-						const dot = isCurrent ? `${c.green}●${c.reset}` : ` `;
-						const label = isCurrent
-							? `${c.cyan}${p.name}${c.reset} ${c.dim}(${p.label})${c.reset}`
-							: `${p.name} ${c.dim}(${p.label})${c.reset}`;
-						console.log(`  ${c.dim}${i + 1}${c.reset} ${dot} ${label}`);
-					}
-					console.log();
-
-					const provChoice = await questionWithEsc(rl, `  ${c.cyan}Provider [1-${SETUP_PROVIDERS.length}]:${c.reset} ${c.dim}(ESC to cancel)${c.reset} `);
-					if (provChoice === null) break; // ESC
-					const idx = parseInt(provChoice, 10) - 1;
-					if (isNaN(idx) || idx < 0 || idx >= SETUP_PROVIDERS.length) {
-						console.log(`  ${c.dim}Cancelled.${c.reset}`);
-						break;
-					}
-
-					const chosen = SETUP_PROVIDERS[idx];
-					const gotKey = await promptForProviderKey(rl, chosen);
-
-					if (!gotKey) {
-						// null (ESC) or false (empty) → cancel
-						break;
-					}
-
-					// Auto-select first model from new provider
-					const defaultModel = getDefaultModelForProvider(chosen.piProvider);
-					if (defaultModel) {
-						currentModelId = defaultModel;
-						const provResolved = resolveModelWithProvider(currentModelId);
-						currentModel = provResolved?.model;
-						currentProviderName = provResolved?.provider || chosen.piProvider;
-						saveModelPreference(currentModelId);
-						console.log(`  ${c.green}✓${c.reset} ${chosen.name} · ${c.bold}${currentModelId}${c.reset}`);
-						printStatusLine();
-					} else {
-						console.log(`  ${c.red}No models available for ${chosen.name}.${c.reset}`);
-					}
-					break;
-				}
-				case "key": {
-					// Update API key for a provider
-					const curProvider = currentProviderName || detectProvider();
-					console.log();
-					for (let i = 0; i < SETUP_PROVIDERS.length; i++) {
-						const p = SETUP_PROVIDERS[i];
-						const hasKey = process.env[p.env] ? `${c.green}✓${c.reset}` : `${c.dim}○${c.reset}`;
-						console.log(`  ${c.dim}${i + 1}${c.reset} ${hasKey} ${p.name} ${c.dim}(${p.label})${c.reset}`);
-					}
-					console.log();
-					const keyChoice = await questionWithEsc(rl, `  ${c.cyan}Update key for [1-${SETUP_PROVIDERS.length}]:${c.reset} ${c.dim}(ESC to cancel)${c.reset} `);
-					if (keyChoice === null || !keyChoice) break;
-					const keyIdx = parseInt(keyChoice, 10) - 1;
-					if (isNaN(keyIdx) || keyIdx < 0 || keyIdx >= SETUP_PROVIDERS.length) {
-						console.log(`  ${c.dim}Cancelled.${c.reset}`);
-						break;
-					}
-					const keyProvider = SETUP_PROVIDERS[keyIdx];
-					const newKey = await questionWithEsc(rl, `  ${c.cyan}${keyProvider.env}:${c.reset} `, { secret: true });
-					if (newKey === null || !newKey) break;
-					const sanitized = newKey.replace(/[\r\n\x00-\x1f]/g, "").trim();
-					if (!sanitized) break;
-					process.env[keyProvider.env] = sanitized;
-					const credPath = path.join(RLM_HOME, "credentials");
-					try {
-						if (!fs.existsSync(RLM_HOME)) fs.mkdirSync(RLM_HOME, { recursive: true });
-						if (fs.existsSync(credPath)) {
-							const content = fs.readFileSync(credPath, "utf-8");
-							const filtered = content.split("\n").filter((l) => {
-								const t = l.trim();
-								if (t.startsWith("export ")) return !t.slice(7).startsWith(keyProvider.env + "=");
-								return !t.startsWith(keyProvider.env + "=");
-							}).join("\n");
-							fs.writeFileSync(credPath, filtered.endsWith("\n") ? filtered : filtered + "\n");
-						}
-						fs.appendFileSync(credPath, `${keyProvider.env}=${sanitized}\n`);
-						try { fs.chmodSync(credPath, 0o600); } catch {}
-						console.log(`  ${c.green}✓${c.reset} ${keyProvider.name} key updated`);
-					} catch {
-						console.log(`  ${c.yellow}!${c.reset} Could not save key.`);
-					}
-					break;
-				}
-				case "trajectories":
-				case "traj":
-					handleTrajectories();
-					break;
-				case "clear":
-					printWelcome();
-					break;
-				case "quit":
-				case "q":
-				case "exit":
-					console.log(`\n  ${c.dim}Goodbye!${c.reset}\n`);
-					process.exit(0);
-					break;
-				default:
-					console.log(`  ${c.red}Unknown command: /${cmd}${c.reset}. Type ${c.cyan}/help${c.reset} for commands.`);
-			}
-
-			rl.prompt();
-			return;
-		}
-
-		// @file shorthand
-		let query = expandAtFiles(line);
-		if (!query && line.startsWith("@")) {
-			rl.prompt();
-			return;
-		}
-		if (!query) query = line;
-
-		// Inline URL detection — extract URL from query, fetch as context
-		if (!contextText) {
-			const urlInline = query.match(/(https?:\/\/\S+)/);
-			if (urlInline) {
-				const url = urlInline[1];
-				const queryWithoutUrl = query.replace(url, "").trim();
-				console.log(`  ${c.dim}Fetching ${url}...${c.reset}`);
-				try {
-					contextText = await safeFetch(url);
-					contextSource = url;
-					const lines = contextText.split("\n").length;
-					console.log(
-						`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines.toLocaleString()} lines) from URL`
-					);
-					if (queryWithoutUrl) {
-						query = queryWithoutUrl;
-					} else {
-						// URL only, no query — prompt for one
-						printStatusLine();
-						console.log(`\n  ${c.dim}Now type your query...${c.reset}\n`);
-						rl.prompt();
-						return;
-					}
-				} catch (err: any) {
-					console.log(`  ${c.red}Failed to fetch URL: ${err.message}${c.reset}`);
-					console.log(`  ${c.dim}Running query as-is...${c.reset}`);
-				}
-			}
-		}
-
-		// Auto-detect bare file/directory paths (tilde, absolute, relative)
-		if (!contextText) {
-			const tokens = query.split(/\s+/);
-			const pathTokens: string[] = [];
-			for (const t of tokens) {
-				if (looksLikePath(t)) pathTokens.push(t);
-				else break;
-			}
-			if (pathTokens.length > 0) {
-				const existing = pathTokens.filter((t) => {
-					const p = path.resolve(expandTilde(t));
-					return fs.existsSync(p);
-				});
-				if (existing.length > 0) {
-					const filePaths = resolveFileArgs(existing);
-					if (filePaths.length === 1) {
-						try {
-							contextText = fs.readFileSync(filePaths[0], "utf-8");
-							contextSource = path.relative(process.cwd(), filePaths[0]) || filePaths[0];
-							const lines = contextText.split("\n").length;
+							currentModelId = pick;
+							currentModel = resolved.model;
+							currentProviderName = resolved.provider;
+							saveModelPreference(currentModelId);
+							console.log(`  ${c.green}✓${c.reset} Switched to ${c.bold}${currentModelId}${c.reset}`);
+							console.log();
+							printStatusLine();
+						} else {
+							// List models for current provider
+							const models = getModelsForProvider(curProvider);
+							const provLabel = findSetupProvider(curProvider)?.name || curProvider;
 							console.log(
-								`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines} lines) from ${c.underline}${contextSource}${c.reset}`
+								`\n  ${c.bold}Current model:${c.reset} ${c.cyan}${currentModelId}${c.reset} ${c.dim}(${provLabel})${c.reset}\n`,
 							);
-						} catch (err: any) {
-							console.log(`  ${c.red}Could not read file: ${err.message}${c.reset}`);
+							const pad = String(models.length).length;
+							for (let i = 0; i < models.length; i++) {
+								const m = models[i];
+								const num = String(i + 1).padStart(pad);
+								const dot = m.id === currentModelId ? `${c.green}●${c.reset}` : ` `;
+								const label = m.id === currentModelId ? `${c.cyan}${m.id}${c.reset}` : `${c.dim}${m.id}${c.reset}`;
+								console.log(`  ${c.dim}${num}${c.reset} ${dot} ${label}`);
+							}
+							console.log(`\n  ${c.dim}${models.length} models · scroll up to see full list.${c.reset}`);
+							console.log(
+								`  ${c.dim}Type${c.reset} ${c.cyan}/model <number>${c.reset} ${c.dim}or${c.reset} ${c.cyan}/model <id>${c.reset} ${c.dim}to switch.${c.reset}`,
+							);
+							console.log(
+								`  ${c.dim}Type${c.reset} ${c.cyan}/provider${c.reset} ${c.dim}to switch provider.${c.reset}`,
+							);
 						}
-					} else if (filePaths.length > 1) {
-						const { text, count, totalBytes } = loadMultipleFiles(filePaths);
-						contextText = text;
-						contextSource = `${count} files`;
-						console.log(
-							`  ${c.green}✓${c.reset} Loaded ${c.bold}${count}${c.reset} files (${(totalBytes / 1024).toFixed(1)}KB total)`
-						);
+						break;
 					}
-					if (contextText) {
-						query = tokens.slice(pathTokens.length).join(" ") || query;
+					case "provider":
+					case "prov": {
+						const curProvider = currentProviderName || detectProvider();
+						const curLabel = findSetupProvider(curProvider)?.name || curProvider;
+						console.log(`\n  ${c.bold}Current provider:${c.reset} ${c.cyan}${curLabel}${c.reset}\n`);
+
+						for (let i = 0; i < SETUP_PROVIDERS.length; i++) {
+							const p = SETUP_PROVIDERS[i];
+							const isCurrent = p.piProvider === curProvider;
+							const dot = isCurrent ? `${c.green}●${c.reset}` : ` `;
+							const label = isCurrent
+								? `${c.cyan}${p.name}${c.reset} ${c.dim}(${p.label})${c.reset}`
+								: `${p.name} ${c.dim}(${p.label})${c.reset}`;
+							console.log(`  ${c.dim}${i + 1}${c.reset} ${dot} ${label}`);
+						}
+						console.log();
+
+						const provChoice = await questionWithEsc(
+							rl,
+							`  ${c.cyan}Provider [1-${SETUP_PROVIDERS.length}]:${c.reset} ${c.dim}(ESC to cancel)${c.reset} `,
+						);
+						if (provChoice === null) break; // ESC
+						const idx = parseInt(provChoice, 10) - 1;
+						if (Number.isNaN(idx) || idx < 0 || idx >= SETUP_PROVIDERS.length) {
+							console.log(`  ${c.dim}Cancelled.${c.reset}`);
+							break;
+						}
+
+						const chosen = SETUP_PROVIDERS[idx];
+						const gotKey = await promptForProviderKey(rl, chosen);
+
+						if (!gotKey) {
+							// null (ESC) or false (empty) → cancel
+							break;
+						}
+
+						// Auto-select first model from new provider
+						const defaultModel = getDefaultModelForProvider(chosen.piProvider);
+						if (defaultModel) {
+							currentModelId = defaultModel;
+							const provResolved = resolveModelWithProvider(currentModelId);
+							currentModel = provResolved?.model;
+							currentProviderName = provResolved?.provider || chosen.piProvider;
+							saveModelPreference(currentModelId);
+							console.log(`  ${c.green}✓${c.reset} ${chosen.name} · ${c.bold}${currentModelId}${c.reset}`);
+							printStatusLine();
+						} else {
+							console.log(`  ${c.red}No models available for ${chosen.name}.${c.reset}`);
+						}
+						break;
+					}
+					case "key": {
+						// Update API key for a provider
+						const _curProvider = currentProviderName || detectProvider();
+						console.log();
+						for (let i = 0; i < SETUP_PROVIDERS.length; i++) {
+							const p = SETUP_PROVIDERS[i];
+							const hasKey = process.env[p.env] ? `${c.green}✓${c.reset}` : `${c.dim}○${c.reset}`;
+							console.log(`  ${c.dim}${i + 1}${c.reset} ${hasKey} ${p.name} ${c.dim}(${p.label})${c.reset}`);
+						}
+						console.log();
+						const keyChoice = await questionWithEsc(
+							rl,
+							`  ${c.cyan}Update key for [1-${SETUP_PROVIDERS.length}]:${c.reset} ${c.dim}(ESC to cancel)${c.reset} `,
+						);
+						if (keyChoice === null || !keyChoice) break;
+						const keyIdx = parseInt(keyChoice, 10) - 1;
+						if (Number.isNaN(keyIdx) || keyIdx < 0 || keyIdx >= SETUP_PROVIDERS.length) {
+							console.log(`  ${c.dim}Cancelled.${c.reset}`);
+							break;
+						}
+						const keyProvider = SETUP_PROVIDERS[keyIdx];
+						const newKey = await questionWithEsc(rl, `  ${c.cyan}${keyProvider.env}:${c.reset} `, { secret: true });
+						if (newKey === null || !newKey) break;
+						const sanitized = newKey.replace(/[\r\n\x00-\x1f]/g, "").trim();
+						if (!sanitized) break;
+						process.env[keyProvider.env] = sanitized;
+						const credPath = path.join(RLM_HOME, "credentials");
+						try {
+							if (!fs.existsSync(RLM_HOME)) fs.mkdirSync(RLM_HOME, { recursive: true });
+							if (fs.existsSync(credPath)) {
+								const content = fs.readFileSync(credPath, "utf-8");
+								const filtered = content
+									.split("\n")
+									.filter((l) => {
+										const t = l.trim();
+										if (t.startsWith("export ")) return !t.slice(7).startsWith(`${keyProvider.env}=`);
+										return !t.startsWith(`${keyProvider.env}=`);
+									})
+									.join("\n");
+								fs.writeFileSync(credPath, filtered.endsWith("\n") ? filtered : `${filtered}\n`);
+							}
+							fs.appendFileSync(credPath, `${keyProvider.env}=${sanitized}\n`);
+							try {
+								fs.chmodSync(credPath, 0o600);
+							} catch {}
+							console.log(`  ${c.green}✓${c.reset} ${keyProvider.name} key updated`);
+						} catch {
+							console.log(`  ${c.yellow}!${c.reset} Could not save key.`);
+						}
+						break;
+					}
+					case "trajectories":
+					case "traj":
+						handleTrajectories();
+						break;
+					case "clear":
+						printWelcome();
+						break;
+					case "quit":
+					case "q":
+					case "exit":
+						console.log(`\n  ${c.dim}Goodbye!${c.reset}\n`);
+						process.exit(0);
+						break;
+					default:
+						console.log(`  ${c.red}Unknown command: /${cmd}${c.reset}. Type ${c.cyan}/help${c.reset} for commands.`);
+				}
+
+				rl.prompt();
+				return;
+			}
+
+			// @file shorthand
+			let query = expandAtFiles(line);
+			if (!query && line.startsWith("@")) {
+				rl.prompt();
+				return;
+			}
+			if (!query) query = line;
+
+			// Inline URL detection — extract URL from query, fetch as context
+			if (!contextText) {
+				const urlInline = query.match(/(https?:\/\/\S+)/);
+				if (urlInline) {
+					const url = urlInline[1];
+					const queryWithoutUrl = query.replace(url, "").trim();
+					console.log(`  ${c.dim}Fetching ${url}...${c.reset}`);
+					try {
+						contextText = await safeFetch(url);
+						contextSource = url;
+						const lines = contextText.split("\n").length;
+						console.log(
+							`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines.toLocaleString()} lines) from URL`,
+						);
+						if (queryWithoutUrl) {
+							query = queryWithoutUrl;
+						} else {
+							// URL only, no query — prompt for one
+							printStatusLine();
+							console.log(`\n  ${c.dim}Now type your query...${c.reset}\n`);
+							rl.prompt();
+							return;
+						}
+					} catch (err: any) {
+						console.log(`  ${c.red}Failed to fetch URL: ${err.message}${c.reset}`);
+						console.log(`  ${c.dim}Running query as-is...${c.reset}`);
 					}
 				}
 			}
-		}
 
-		// Run query
-		await runQuery(query);
-		printStatusLine();
-		rl.prompt();
-	  } catch (err: any) {
-		showErrorMsg(String(err?.message || err));
-		rl.prompt();
-	  }
+			// Auto-detect bare file/directory paths (tilde, absolute, relative)
+			if (!contextText) {
+				const tokens = query.split(/\s+/);
+				const pathTokens: string[] = [];
+				for (const t of tokens) {
+					if (looksLikePath(t)) pathTokens.push(t);
+					else break;
+				}
+				if (pathTokens.length > 0) {
+					const existing = pathTokens.filter((t) => {
+						const p = path.resolve(expandTilde(t));
+						return fs.existsSync(p);
+					});
+					if (existing.length > 0) {
+						const filePaths = resolveFileArgs(existing);
+						if (filePaths.length === 1) {
+							try {
+								contextText = fs.readFileSync(filePaths[0], "utf-8");
+								contextSource = path.relative(process.cwd(), filePaths[0]) || filePaths[0];
+								const lines = contextText.split("\n").length;
+								console.log(
+									`  ${c.green}✓${c.reset} Loaded ${c.bold}${contextText.length.toLocaleString()}${c.reset} chars (${lines} lines) from ${c.underline}${contextSource}${c.reset}`,
+								);
+							} catch (err: any) {
+								console.log(`  ${c.red}Could not read file: ${err.message}${c.reset}`);
+							}
+						} else if (filePaths.length > 1) {
+							const { text, count, totalBytes } = loadMultipleFiles(filePaths);
+							contextText = text;
+							contextSource = `${count} files`;
+							console.log(
+								`  ${c.green}✓${c.reset} Loaded ${c.bold}${count}${c.reset} files (${(totalBytes / 1024).toFixed(1)}KB total)`,
+							);
+						}
+						if (contextText) {
+							query = tokens.slice(pathTokens.length).join(" ") || query;
+						}
+					}
+				}
+			}
+
+			// Run query
+			await runQuery(query);
+			printStatusLine();
+			rl.prompt();
+		} catch (err: any) {
+			showErrorMsg(String(err?.message || err));
+			rl.prompt();
+		}
 	});
 
 	// Ctrl+C: abort running query, or double-tap to exit
@@ -1774,7 +1898,11 @@ async function interactive(): Promise<void> {
 			activeSpinner?.stop();
 			console.log(`\n  ${c.red}Stopped${c.reset}`);
 			activeAc.abort();
-			try { activeRepl?.shutdown(); } catch { /* ok */ }
+			try {
+				activeRepl?.shutdown();
+			} catch {
+				/* ok */
+			}
 			isRunning = false;
 			lastSigint = 0;
 		} else {

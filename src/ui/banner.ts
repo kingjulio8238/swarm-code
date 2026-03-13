@@ -2,8 +2,8 @@
  * Startup banner — the first thing users see when running swarm.
  */
 
+import { getLogLevel, isJsonMode, logKeyValue } from "./log.js";
 import { bold, coral, cyan, dim, isTTY, symbols, termWidth } from "./theme.js";
-import { logKeyValue, isJsonMode, getLogLevel } from "./log.js";
 
 const VERSION = "0.1.0";
 
@@ -30,7 +30,9 @@ export function renderBanner(config: {
 		const rightPad = symbols.horizontal.repeat(Math.ceil(padLen / 2));
 
 		process.stderr.write("\n");
-		process.stderr.write(`  ${cyan(`${symbols.topLeft}${leftPad}`)}${bold(coral(title))}${dim(version)}${cyan(`${rightPad}${symbols.topRight}`)}\n`);
+		process.stderr.write(
+			`  ${cyan(`${symbols.topLeft}${leftPad}`)}${bold(coral(title))}${dim(version)}${cyan(`${rightPad}${symbols.topRight}`)}\n`,
+		);
 		process.stderr.write(`  ${cyan(symbols.vertLine)}${" ".repeat(Math.max(0, w - 2))}${cyan(symbols.vertLine)}\n`);
 	} else {
 		process.stderr.write(`\nswarm v${VERSION}\n`);
@@ -49,7 +51,9 @@ export function renderBanner(config: {
 
 	if (isTTY) {
 		process.stderr.write(`  ${cyan(symbols.vertLine)}${" ".repeat(Math.max(0, w - 2))}${cyan(symbols.vertLine)}\n`);
-		process.stderr.write(`  ${cyan(symbols.bottomLeft)}${cyan(symbols.horizontal.repeat(Math.max(0, w - 2)))}${cyan(symbols.bottomRight)}\n`);
+		process.stderr.write(
+			`  ${cyan(symbols.bottomLeft)}${cyan(symbols.horizontal.repeat(Math.max(0, w - 2)))}${cyan(symbols.bottomRight)}\n`,
+		);
 	}
 
 	// Query on its own line, slightly emphasized

@@ -44,12 +44,7 @@ export interface ThreadCacheStats {
  * Compute a stable cache key from thread parameters.
  * Normalizes inputs: trims task, sorts files, lowercases agent/model.
  */
-function computeCacheKey(
-	task: string,
-	files: string[],
-	agent: string,
-	model: string,
-): string {
+function computeCacheKey(task: string, files: string[], agent: string, model: string): string {
 	const normalized = JSON.stringify({
 		task: task.trim(),
 		files: [...files].sort(),
@@ -84,7 +79,7 @@ export class ThreadCache {
 
 		let files: string[];
 		try {
-			files = fs.readdirSync(this.persistDir).filter(f => f.endsWith(".json"));
+			files = fs.readdirSync(this.persistDir).filter((f) => f.endsWith(".json"));
 		} catch {
 			return;
 		}
@@ -133,12 +128,7 @@ export class ThreadCache {
 	 * Look up a cached result for the given thread parameters.
 	 * Returns undefined on cache miss.
 	 */
-	get(
-		task: string,
-		files: string[],
-		agent: string,
-		model: string,
-	): CompressedResult | undefined {
+	get(task: string, files: string[], agent: string, model: string): CompressedResult | undefined {
 		const key = computeCacheKey(task, files, agent, model);
 		const entry = this.cache.get(key);
 
@@ -173,13 +163,7 @@ export class ThreadCache {
 	 * Store a thread result in the cache.
 	 * Only caches successful results — failed threads should be retried.
 	 */
-	set(
-		task: string,
-		files: string[],
-		agent: string,
-		model: string,
-		result: CompressedResult,
-	): void {
+	set(task: string, files: string[], agent: string, model: string, result: CompressedResult): void {
 		// Don't cache failures
 		if (!result.success) return;
 

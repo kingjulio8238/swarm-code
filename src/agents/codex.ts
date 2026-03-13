@@ -12,7 +12,7 @@
 
 import { spawn } from "node:child_process";
 import * as os from "node:os";
-import type { AgentProvider, AgentRunOptions, AgentResult } from "../core/types.js";
+import type { AgentProvider, AgentResult, AgentRunOptions } from "../core/types.js";
 import { registerAgent } from "./provider.js";
 
 async function commandExists(cmd: string): Promise<boolean> {
@@ -135,14 +135,7 @@ const codexProvider: AgentProvider = {
 		const { task, workDir, model, files, signal } = options;
 		const startTime = Date.now();
 
-		const args = [
-			"exec",
-			"--json",
-			"--full-auto",
-			"--ephemeral",
-			"--skip-git-repo-check",
-			"--cd", workDir,
-		];
+		const args = ["exec", "--json", "--full-auto", "--ephemeral", "--skip-git-repo-check", "--cd", workDir];
 
 		if (model) {
 			args.push("--model", resolveModel(model));
@@ -151,7 +144,7 @@ const codexProvider: AgentProvider = {
 		// Build the prompt — include file hints if provided
 		let prompt = task;
 		if (files && files.length > 0) {
-			prompt += `\n\nRelevant files to focus on:\n${files.map(f => `- ${f}`).join("\n")}`;
+			prompt += `\n\nRelevant files to focus on:\n${files.map((f) => `- ${f}`).join("\n")}`;
 		}
 		args.push(prompt);
 
@@ -186,7 +179,11 @@ const codexProvider: AgentProvider = {
 				const onAbort = () => {
 					proc.kill("SIGTERM");
 					const killTimer = setTimeout(() => {
-						try { if (proc.exitCode === null) proc.kill("SIGKILL"); } catch { /* already dead */ }
+						try {
+							if (proc.exitCode === null) proc.kill("SIGKILL");
+						} catch {
+							/* already dead */
+						}
 					}, 3000);
 					proc.on("exit", () => clearTimeout(killTimer));
 				};
@@ -210,7 +207,9 @@ const codexProvider: AgentProvider = {
 					filesChanged: parsed.filesChanged,
 					diff: "", // Diff is captured separately by worktree manager
 					durationMs,
-					error: parsed.error || (code !== 0 ? `codex exited with code ${code}${stderr ? `: ${stderr.slice(0, 500)}` : ""}` : undefined),
+					error:
+						parsed.error ||
+						(code !== 0 ? `codex exited with code ${code}${stderr ? `: ${stderr.slice(0, 500)}` : ""}` : undefined),
 					usage: parsed.usage,
 				});
 			});

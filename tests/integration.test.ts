@@ -7,22 +7,22 @@
  * Each test creates a temporary git repo, exercises the pipeline, and verifies results.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // Register mock agent before anything else
 import "../src/agents/mock.js";
 
 import { getAgent, listAgents } from "../src/agents/provider.js";
-import { WorktreeManager } from "../src/worktree/manager.js";
-import { mergeThreadBranch, mergeAllThreads } from "../src/worktree/merge.js";
 import { compressResult } from "../src/compression/compressor.js";
-import { ThreadManager } from "../src/threads/manager.js";
 import { loadConfig } from "../src/config.js";
 import type { ThreadState } from "../src/core/types.js";
+import { ThreadManager } from "../src/threads/manager.js";
+import { WorktreeManager } from "../src/worktree/manager.js";
+import { mergeAllThreads, mergeThreadBranch } from "../src/worktree/merge.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -43,9 +43,15 @@ function createTempRepo(): string {
 function cleanupRepo(dir: string): void {
 	try {
 		// Prune worktrees first to avoid lock issues
-		try { execFileSync("git", ["worktree", "prune"], { cwd: dir }); } catch { /* ok */ }
+		try {
+			execFileSync("git", ["worktree", "prune"], { cwd: dir });
+		} catch {
+			/* ok */
+		}
 		fs.rmSync(dir, { recursive: true, force: true });
-	} catch { /* best effort */ }
+	} catch {
+		/* best effort */
+	}
 }
 
 function getTestConfig() {
@@ -142,11 +148,7 @@ describe("Worktree Manager", () => {
 	});
 
 	it("should handle multiple concurrent worktrees", async () => {
-		const infos = await Promise.all([
-			wm.create("multi-1"),
-			wm.create("multi-2"),
-			wm.create("multi-3"),
-		]);
+		const infos = await Promise.all([wm.create("multi-1"), wm.create("multi-2"), wm.create("multi-3")]);
 		expect(infos).toHaveLength(3);
 		for (const info of infos) {
 			expect(fs.existsSync(info.path)).toBe(true);
@@ -283,7 +285,7 @@ describe("Thread Manager — Single Thread", () => {
 			agent: { backend: "mock", model: "mock-model" },
 		});
 
-		const result = await resultPromise;
+		const _result = await resultPromise;
 		const state = tm.getThread("thread-state");
 		expect(state).toBeDefined();
 		expect(state!.status).toBe("completed");
@@ -376,7 +378,7 @@ describe("Thread Manager — Parallel Threads", () => {
 		// All threads should be tracked
 		const threads = tm.getThreads();
 		expect(threads).toHaveLength(3);
-		expect(threads.every(t => t.status === "completed")).toBe(true);
+		expect(threads.every((t) => t.status === "completed")).toBe(true);
 	});
 });
 
@@ -428,7 +430,14 @@ describe("Merge Pipeline", () => {
 				status: "completed",
 				phase: "completed",
 				branchName: infoA.branch,
-				result: { success: true, summary: "", filesChanged: ["file-a.ts"], diffStats: "", durationMs: 0, estimatedCostUsd: 0 },
+				result: {
+					success: true,
+					summary: "",
+					filesChanged: ["file-a.ts"],
+					diffStats: "",
+					durationMs: 0,
+					estimatedCostUsd: 0,
+				},
 				attempt: 1,
 				maxAttempts: 1,
 				estimatedCostUsd: 0,
@@ -440,7 +449,14 @@ describe("Merge Pipeline", () => {
 				status: "completed",
 				phase: "completed",
 				branchName: infoB.branch,
-				result: { success: true, summary: "", filesChanged: ["file-b.ts"], diffStats: "", durationMs: 0, estimatedCostUsd: 0 },
+				result: {
+					success: true,
+					summary: "",
+					filesChanged: ["file-b.ts"],
+					diffStats: "",
+					durationMs: 0,
+					estimatedCostUsd: 0,
+				},
 				attempt: 1,
 				maxAttempts: 1,
 				estimatedCostUsd: 0,
@@ -450,7 +466,7 @@ describe("Merge Pipeline", () => {
 
 		const results = await mergeAllThreads(repoDir, threads);
 		expect(results).toHaveLength(2);
-		expect(results.every(r => r.success)).toBe(true);
+		expect(results.every((r) => r.success)).toBe(true);
 
 		// Both files should exist on main
 		expect(fs.existsSync(path.join(repoDir, "file-a.ts"))).toBe(true);
@@ -562,7 +578,7 @@ describe("Full Pipeline — End-to-End", () => {
 		]);
 
 		// 2. All should succeed
-		expect(results.every(r => r.success)).toBe(true);
+		expect(results.every((r) => r.success)).toBe(true);
 
 		// 3. Merge all
 		const threads = tm.getThreads();

@@ -7,10 +7,7 @@
  * Convention: progress/status → stderr, final answer → stdout.
  */
 
-import {
-	bold, cyan, dim, green, red, yellow, gray, magenta,
-	hr, isTTY, symbols,
-} from "./theme.js";
+import { bold, cyan, dim, gray, green, hr, magenta, red, symbols, yellow } from "./theme.js";
 
 export type LogLevel = "quiet" | "normal" | "verbose";
 
@@ -123,7 +120,7 @@ export function logAnswer(answer: string): void {
 
 /** Write structured JSON output. */
 export function logJson(data: Record<string, unknown>): void {
-	process.stdout.write(JSON.stringify(data, null, 2) + "\n");
+	process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
 }
 
 // ── Phase color mapping ────────────────────────────────────────────────────

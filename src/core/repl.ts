@@ -9,8 +9,8 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
@@ -214,14 +214,24 @@ export class PythonRepl {
 			}
 			if (process.platform === "win32") {
 				// Windows: SIGTERM is ignored, kill immediately
-				try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+				try {
+					proc.kill("SIGKILL");
+				} catch {
+					/* already dead */
+				}
 			} else {
 				// Unix: give Python 500ms to exit gracefully, then force kill
 				const killTimer = setTimeout(() => {
-					try { if (proc.exitCode === null) proc.kill("SIGKILL"); } catch {}
+					try {
+						if (proc.exitCode === null) proc.kill("SIGKILL");
+					} catch {}
 				}, 500);
 				proc.on("exit", () => clearTimeout(killTimer));
-				try { proc.kill("SIGTERM"); } catch { /* already dead */ }
+				try {
+					proc.kill("SIGTERM");
+				} catch {
+					/* already dead */
+				}
 			}
 		}
 		this.cleanup();
@@ -317,13 +327,7 @@ export class PythonRepl {
 		}
 
 		try {
-			const result = await this.threadHandler(
-				msg.task,
-				msg.context,
-				msg.agent_backend,
-				msg.model,
-				msg.files || [],
-			);
+			const result = await this.threadHandler(msg.task, msg.context, msg.agent_backend, msg.model, msg.files || []);
 			this.send({
 				type: "thread_result",
 				id: msg.id,

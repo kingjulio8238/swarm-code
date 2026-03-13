@@ -7,8 +7,8 @@
  * Requires Python 3 to be installed; skips gracefully if unavailable.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
+import { afterEach, describe, expect, it } from "vitest";
 import { PythonRepl } from "../../src/core/repl.js";
 
 // ── Python availability check ────────────────────────────────────────────────
@@ -56,7 +56,7 @@ describe.skipIf(!hasPython)("PythonRepl protocol", { timeout: 15000 }, () => {
 
 	// ── 3. FINAL detection ──────────────────────────────────────────────────
 
-	it("execute('FINAL(\"done\")') returns hasFinal=true, finalValue=\"done\"", async () => {
+	it('execute(\'FINAL("done")\') returns hasFinal=true, finalValue="done"', async () => {
 		repl = new PythonRepl();
 		await repl.start();
 
@@ -152,12 +152,7 @@ describe.skipIf(!hasPython)("PythonRepl protocol", { timeout: 15000 }, () => {
 		repl = new PythonRepl();
 		await repl.start();
 
-		const code = [
-			"total = 0",
-			"for i in range(5):",
-			"    total += i",
-			"print(total)",
-		].join("\n");
+		const code = ["total = 0", "for i in range(5):", "    total += i", "print(total)"].join("\n");
 
 		const result = await repl.execute(code);
 		expect(result.stdout).toBe("10\n");

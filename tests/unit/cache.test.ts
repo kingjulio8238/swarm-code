@@ -2,12 +2,12 @@
  * Tests for ThreadCache — subthread result caching with TTL and disk persistence.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import { ThreadCache } from "../../src/threads/cache.js";
+import * as path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CompressedResult } from "../../src/core/types.js";
+import { ThreadCache } from "../../src/threads/cache.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -188,7 +188,7 @@ describe("ThreadCache", () => {
 			expect(stats.hits).toBe(2);
 			expect(stats.misses).toBe(1);
 			expect(stats.totalSavedMs).toBe(16000); // 8000 * 2
-			expect(stats.totalSavedUsd).toBeCloseTo(0.10); // 0.05 * 2
+			expect(stats.totalSavedUsd).toBeCloseTo(0.1); // 0.05 * 2
 			expect(stats.size).toBe(1);
 		});
 	});

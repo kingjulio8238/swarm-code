@@ -7,7 +7,7 @@
 
 import { spawn } from "node:child_process";
 import * as os from "node:os";
-import type { AgentProvider, AgentRunOptions, AgentResult } from "../core/types.js";
+import type { AgentProvider, AgentResult, AgentRunOptions } from "../core/types.js";
 import { registerAgent } from "./provider.js";
 
 async function commandExists(cmd: string): Promise<boolean> {
@@ -43,7 +43,9 @@ function extractJson(raw: string): ClaudeCodeJsonOutput | null {
 	// Try direct parse first
 	try {
 		return JSON.parse(raw) as ClaudeCodeJsonOutput;
-	} catch { /* mixed output */ }
+	} catch {
+		/* mixed output */
+	}
 
 	// Try last line (claude outputs JSON as final line)
 	const lines = raw.trim().split("\n");
@@ -53,7 +55,7 @@ function extractJson(raw: string): ClaudeCodeJsonOutput | null {
 			try {
 				const parsed = JSON.parse(line) as ClaudeCodeJsonOutput;
 				if (parsed.type === "result") return parsed;
-			} catch { continue; }
+			} catch {}
 		}
 	}
 
@@ -63,7 +65,9 @@ function extractJson(raw: string): ClaudeCodeJsonOutput | null {
 	if (firstBrace !== -1 && lastBrace > firstBrace) {
 		try {
 			return JSON.parse(raw.slice(firstBrace, lastBrace + 1)) as ClaudeCodeJsonOutput;
-		} catch { /* give up */ }
+		} catch {
+			/* give up */
+		}
 	}
 
 	return null;
@@ -121,12 +125,7 @@ const claudeCodeProvider: AgentProvider = {
 		const { task, workDir, model, files, signal } = options;
 		const startTime = Date.now();
 
-		const args = [
-			"-p",
-			"--output-format", "json",
-			"--dangerously-skip-permissions",
-			"--no-session-persistence",
-		];
+		const args = ["-p", "--output-format", "json", "--dangerously-skip-permissions", "--no-session-persistence"];
 
 		if (model) {
 			args.push("--model", resolveModel(model));
@@ -135,7 +134,7 @@ const claudeCodeProvider: AgentProvider = {
 		// Build the prompt — include file hints if provided
 		let prompt = task;
 		if (files && files.length > 0) {
-			prompt += `\n\nRelevant files to focus on:\n${files.map(f => `- ${f}`).join("\n")}`;
+			prompt += `\n\nRelevant files to focus on:\n${files.map((f) => `- ${f}`).join("\n")}`;
 		}
 		args.push(prompt);
 
@@ -170,7 +169,11 @@ const claudeCodeProvider: AgentProvider = {
 				const onAbort = () => {
 					proc.kill("SIGTERM");
 					const killTimer = setTimeout(() => {
-						try { if (proc.exitCode === null) proc.kill("SIGKILL"); } catch { /* already dead */ }
+						try {
+							if (proc.exitCode === null) proc.kill("SIGKILL");
+						} catch {
+							/* already dead */
+						}
 					}, 3000);
 					proc.on("exit", () => clearTimeout(killTimer));
 				};
