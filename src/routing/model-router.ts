@@ -242,11 +242,11 @@ export async function routeTask(
 
 			let score = 0;
 
-			// Strength matching
+			// Strength matching (word-boundary to avoid substring false positives)
 			for (const strength of cap.strengths) {
 				const keywords = strength.split("-");
 				for (const kw of keywords) {
-					if (lower.includes(kw) && kw.length > 3) score += 2;
+					if (kw.length > 3 && new RegExp(`\\b${kw}\\b`).test(lower)) score += 2;
 				}
 			}
 

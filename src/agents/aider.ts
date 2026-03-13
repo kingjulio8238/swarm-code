@@ -127,7 +127,7 @@ const aiderProvider: AgentProvider = {
 		return new Promise<AgentResult>((resolve) => {
 			const proc = spawn("aider", args, {
 				cwd: workDir,
-				stdio: ["pipe", "pipe", "pipe"],
+				stdio: ["ignore", "pipe", "pipe"],
 				env: buildAgentEnv(),
 			});
 
@@ -159,8 +159,12 @@ const aiderProvider: AgentProvider = {
 					}, 3000);
 					proc.on("exit", () => clearTimeout(killTimer));
 				};
-				signal.addEventListener("abort", onAbort, { once: true });
-				proc.on("exit", () => signal.removeEventListener("abort", onAbort));
+				if (signal.aborted) {
+					onAbort();
+				} else {
+					signal.addEventListener("abort", onAbort, { once: true });
+					proc.on("exit", () => signal.removeEventListener("abort", onAbort));
+				}
 			}
 
 			proc.on("close", (code) => {

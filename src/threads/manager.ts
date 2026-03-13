@@ -49,14 +49,18 @@ class AsyncSemaphore {
 		await new Promise<void>((resolve) => {
 			this.waiters.push(resolve);
 		});
-		this.current++;
+		// current already accounts for this slot — release() transferred it directly
 	}
 
 	release(): void {
-		if (this.current <= 0) return; // Guard against double-release
-		this.current--;
 		const next = this.waiters.shift();
-		if (next) next();
+		if (next) {
+			// Transfer the slot directly to the waiter (current stays the same)
+			next();
+		} else {
+			if (this.current <= 0) return; // Guard against double-release
+			this.current--;
+		}
 	}
 
 	get activeCount(): number {
@@ -255,8 +259,13 @@ export class ThreadManager {
 		// Create per-thread abort controller (linked to session abort)
 		const threadAc = new AbortController();
 		this.threadAbortControllers.set(threadId, threadAc);
+		const onSessionAbort = () => threadAc.abort();
 		if (this.sessionAbort) {
-			this.sessionAbort.addEventListener("abort", () => threadAc.abort(), { once: true });
+			if (this.sessionAbort.aborted) {
+				threadAc.abort();
+			} else {
+				this.sessionAbort.addEventListener("abort", onSessionAbort, { once: true });
+			}
 		}
 
 		// Retry loop
@@ -279,6 +288,7 @@ export class ThreadManager {
 			if (state.status === "cancelled") break;
 		}
 
+		this.sessionAbort?.removeEventListener("abort", onSessionAbort);
 		this.threadAbortControllers.delete(threadId);
 		return lastResult!;
 	}
@@ -345,7 +355,7 @@ export class ThreadManager {
 				});
 			} finally {
 				signal.removeEventListener("abort", onAbort);
-				// timeoutSignal auto-GCs
+				timeoutSignal.removeEventListener("abort", onAbort);
 			}
 
 			if (signal.aborted) {
@@ -471,7 +481,7 @@ export class ThreadManager {
 		for (const [id, ac] of this.threadAbortControllers) {
 			ac.abort();
 			const state = this.threads.get(id);
-			if (state && state.status === "running") {
+			if (state && (state.status === "running" || state.status === "pending")) {
 				state.status = "cancelled";
 				state.phase = "cancelled";
 			}

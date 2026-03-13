@@ -257,44 +257,35 @@ export class EpisodicMemory {
 		const recalls = this.recall(task, 5, 0.25);
 		if (recalls.length === 0) return null;
 
-		// Weight by similarity * success-quality (lower cost + faster = better quality)
-		const agentScores: Map<string, number> = new Map();
-		const modelScores: Map<string, number> = new Map();
+		// Score agent+model pairs as composite keys to avoid mismatched combos
+		const pairScores: Map<string, { agent: string; model: string; score: number }> = new Map();
 
 		for (const { episode, similarity } of recalls) {
 			const quality = 1 / (1 + episode.estimatedCostUsd * 10 + episode.durationMs / 60000);
 			const score = similarity * quality;
 
-			const agentKey = episode.agent;
-			const modelKey = episode.model;
-			agentScores.set(agentKey, (agentScores.get(agentKey) || 0) + score);
-			modelScores.set(modelKey, (modelScores.get(modelKey) || 0) + score);
-		}
-
-		// Pick highest-scoring agent and model
-		let bestAgent = "";
-		let bestAgentScore = 0;
-		for (const [agent, score] of agentScores) {
-			if (score > bestAgentScore) {
-				bestAgent = agent;
-				bestAgentScore = score;
+			const pairKey = `${episode.agent}::${episode.model}`;
+			const existing = pairScores.get(pairKey);
+			if (existing) {
+				existing.score += score;
+			} else {
+				pairScores.set(pairKey, { agent: episode.agent, model: episode.model, score });
 			}
 		}
 
-		let bestModel = "";
-		let bestModelScore = 0;
-		for (const [model, score] of modelScores) {
-			if (score > bestModelScore) {
-				bestModel = model;
-				bestModelScore = score;
+		// Pick highest-scoring agent+model pair
+		let bestPair: { agent: string; model: string; score: number } | null = null;
+		for (const pair of pairScores.values()) {
+			if (!bestPair || pair.score > bestPair.score) {
+				bestPair = pair;
 			}
 		}
 
-		if (!bestAgent) return null;
+		if (!bestPair) return null;
 
 		return {
-			agent: bestAgent,
-			model: bestModel,
+			agent: bestPair.agent,
+			model: bestPair.model,
 			confidence: Math.min(1, recalls[0].similarity),
 		};
 	}

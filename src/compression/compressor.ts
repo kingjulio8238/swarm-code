@@ -42,14 +42,14 @@ export function setSummarizer(fn: LlmSummarizer): void {
  * These lines are stripped so the orchestrator only sees successful conclusions.
  */
 const FAILURE_NOISE_PATTERNS = [
-	// Error/retry indicators
-	/^error[:\s]/i,
-	/^Error:/,
-	/failed to/i,
-	/retrying/i,
-	/retry attempt/i,
-	/^warning[:\s]/i,
-	/timed? ?out/i,
+	// Error/retry indicators (anchored to avoid matching "Error handling added")
+	/^error: /i,
+	/^Error: /,
+	/^failed to /i,
+	/^retrying/i,
+	/^retry attempt/i,
+	/^warning: /i,
+	/^timed? ?out/i,
 	// Common agent noise: stack traces
 	/^\s+at\s+\S+\s+\(/,
 	/^Traceback \(most recent/,
@@ -59,10 +59,10 @@ const FAILURE_NOISE_PATTERNS = [
 	/^Searching\.\.\./i,
 	/^Reading\.\.\./i,
 	/^Running command\.\.\./i,
-	// Reverted / undone actions
-	/reverted/i,
-	/undoing/i,
-	/rolling back/i,
+	// Reverted / undone actions (anchored to start of line)
+	/^reverted /i,
+	/^undoing /i,
+	/^rolling back/i,
 ];
 
 /** Patterns that indicate successful, conclusive output worth keeping. */
@@ -103,8 +103,8 @@ function filterToSuccessfulOutput(agentOutput: string): string {
 	for (const line of lines) {
 		const trimmed = line.trimStart();
 
-		// Detect start of stack trace blocks
-		if (/^Traceback \(most recent/.test(trimmed) || /^\s+at\s+\S+\s+\(/.test(trimmed)) {
+		// Detect start of stack trace blocks (test untrimmed `line` for JS stack traces with leading whitespace)
+		if (/^Traceback \(most recent/.test(trimmed) || /^\s+at\s+\S+\s+\(/.test(line)) {
 			inStackTrace = true;
 			continue;
 		}
@@ -253,7 +253,11 @@ function compressTruncate(input: CompressionInput, maxChars: number): string {
 	].filter(Boolean).join("\n\n");
 
 	if (raw.length > maxChars * 4) {
-		return raw.slice(-(maxChars * 4));
+		// Preserve status line at the head, truncate from the middle
+		const statusEnd = raw.indexOf("\n");
+		const statusLine = statusEnd !== -1 ? raw.slice(0, statusEnd) : "";
+		const remaining = maxChars * 4 - statusLine.length - 20;
+		return statusLine + "\n... [truncated]\n" + raw.slice(-remaining);
 	}
 	return raw;
 }

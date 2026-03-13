@@ -23,34 +23,34 @@ const directLlmProvider: AgentProvider = {
 	async run(options: AgentRunOptions): Promise<AgentResult> {
 		const startTime = Date.now();
 
-		// Import pi-ai dynamically to avoid loading it at module level
-		const { completeSimple, getModels, getProviders } = await import("@mariozechner/pi-ai");
-		const modelId = options.model || process.env.RLM_MODEL || "claude-sonnet-4-6";
-
-		// Find model
-		let model;
-		for (const provider of getProviders()) {
-			for (const m of getModels(provider)) {
-				if (m.id === modelId) {
-					model = m;
-					break;
-				}
-			}
-			if (model) break;
-		}
-
-		if (!model) {
-			return {
-				success: false,
-				output: "",
-				filesChanged: [],
-				diff: "",
-				durationMs: Date.now() - startTime,
-				error: `Model "${modelId}" not found`,
-			};
-		}
-
 		try {
+			// Import pi-ai dynamically to avoid loading it at module level
+			const { completeSimple, getModels, getProviders } = await import("@mariozechner/pi-ai");
+			const modelId = options.model || process.env.RLM_MODEL || "claude-sonnet-4-6";
+
+			// Find model
+			let model;
+			for (const provider of getProviders()) {
+				for (const m of getModels(provider)) {
+					if (m.id === modelId) {
+						model = m;
+						break;
+					}
+				}
+				if (model) break;
+			}
+
+			if (!model) {
+				return {
+					success: false,
+					output: "",
+					filesChanged: [],
+					diff: "",
+					durationMs: Date.now() - startTime,
+					error: `Model "${modelId}" not found`,
+				};
+			}
+
 			const response = await completeSimple(model, {
 				systemPrompt: "You are a helpful assistant. Be concise and thorough.",
 				messages: [{

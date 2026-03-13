@@ -68,7 +68,7 @@ export class ThreadCache {
 	private maxEntries: number;
 	private persistDir?: string;
 	private ttlMs: number;
-	private persistedCount: number = 0;
+	private persistedKeys: Set<string> = new Set();
 
 	constructor(maxEntries: number = 100, persistDir?: string, ttlHours: number = 24) {
 		this.maxEntries = maxEntries;
@@ -113,7 +113,7 @@ export class ThreadCache {
 					cachedAt: entry.cachedAt,
 					hitCount: 0,
 				});
-				this.persistedCount++;
+				this.persistedKeys.add(entry.key);
 			} catch {
 				// Skip corrupt files
 			}
@@ -213,7 +213,7 @@ export class ThreadCache {
 			misses: this.misses,
 			totalSavedMs: this.totalSavedMs,
 			totalSavedUsd: this.totalSavedUsd,
-			persistedEntries: this.persistedCount,
+			persistedEntries: this.persistedKeys.size,
 		};
 	}
 
@@ -233,9 +233,9 @@ export class ThreadCache {
 		if (!this.persistDir) return;
 		try {
 			const entry: DiskCacheEntry = { key, result, cachedAt };
-			const filePath = path.join(this.persistDir, `${key.slice(0, 16)}.json`);
+			const filePath = path.join(this.persistDir, `${key}.json`);
 			fs.writeFileSync(filePath, JSON.stringify(entry), "utf-8");
-			this.persistedCount++;
+			this.persistedKeys.add(key);
 		} catch {
 			// Non-fatal
 		}
@@ -244,10 +244,10 @@ export class ThreadCache {
 	private deleteDiskEntry(key: string): void {
 		if (!this.persistDir) return;
 		try {
-			const filePath = path.join(this.persistDir, `${key.slice(0, 16)}.json`);
+			const filePath = path.join(this.persistDir, `${key}.json`);
 			if (fs.existsSync(filePath)) {
 				fs.unlinkSync(filePath);
-				this.persistedCount--;
+				this.persistedKeys.delete(key);
 			}
 		} catch {
 			// Non-fatal

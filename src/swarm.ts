@@ -518,6 +518,8 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 		console.error("---");
 		console.log(result.answer);
 	} finally {
+		process.removeListener("SIGINT", abortAndExit);
+		process.removeListener("SIGTERM", abortAndExit);
 		repl.shutdown();
 		await threadManager.cleanup();
 	}

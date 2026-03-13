@@ -96,8 +96,15 @@ function parseYaml(text: string): Record<string, unknown> {
 		if (colonIdx === -1) continue;
 		const key = trimmed.slice(0, colonIdx).trim();
 		const rawVal = trimmed.slice(colonIdx + 1).trim();
-		// Strip inline comments
-		const val = rawVal.replace(/\s+#.*$/, "");
+		// Strip inline comments (but not inside quoted strings)
+		let val: string;
+		if ((rawVal.startsWith('"') && rawVal.includes('"', 1)) ||
+			(rawVal.startsWith("'") && rawVal.includes("'", 1))) {
+			// Quoted value — don't strip inline comments
+			val = rawVal;
+		} else {
+			val = rawVal.replace(/\s+#.*$/, "");
+		}
 		// Parse number
 		const num = Number(val);
 		if (!isNaN(num) && val !== "") {
@@ -154,8 +161,8 @@ export function loadConfig(): SwarmConfig {
 					max_threads: clamp(parsed.max_threads, 1, 20, DEFAULTS.max_threads),
 					max_total_threads: clamp(parsed.max_total_threads, 1, 100, DEFAULTS.max_total_threads),
 					thread_timeout_ms: clamp(parsed.thread_timeout_ms, 10000, 3600000, DEFAULTS.thread_timeout_ms),
-					max_thread_budget_usd: typeof parsed.max_thread_budget_usd === "number" && parsed.max_thread_budget_usd > 0 ? parsed.max_thread_budget_usd : DEFAULTS.max_thread_budget_usd,
-					max_session_budget_usd: typeof parsed.max_session_budget_usd === "number" && parsed.max_session_budget_usd > 0 ? parsed.max_session_budget_usd : DEFAULTS.max_session_budget_usd,
+					max_thread_budget_usd: typeof parsed.max_thread_budget_usd === "number" && isFinite(parsed.max_thread_budget_usd) && parsed.max_thread_budget_usd > 0 ? parsed.max_thread_budget_usd : DEFAULTS.max_thread_budget_usd,
+					max_session_budget_usd: typeof parsed.max_session_budget_usd === "number" && isFinite(parsed.max_session_budget_usd) && parsed.max_session_budget_usd > 0 ? parsed.max_session_budget_usd : DEFAULTS.max_session_budget_usd,
 					default_agent: str(parsed.default_agent, DEFAULTS.default_agent),
 					default_model: str(parsed.default_model, DEFAULTS.default_model),
 					auto_model_selection: bool(parsed.auto_model_selection, DEFAULTS.auto_model_selection),
