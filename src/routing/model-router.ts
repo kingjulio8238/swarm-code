@@ -57,7 +57,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapability> = {
 		name: "codex",
 		costTier: 2,
 		speedTier: 2,
-		strengths: ["code-generation", "completions", "openai-models", "tool-use"],
+		strengths: ["code-execution", "shell-commands", "testing", "openai-models", "tool-use"],
 		defaultModel: "o3-mini",
 		cheapModel: "gpt-4o-mini",
 		premiumModel: "o3",
@@ -167,6 +167,9 @@ export async function routeTask(
 			if (complexity === "simple") {
 				// Prefer cheap + fast agents
 				score += (5 - cap.costTier) + (5 - cap.speedTier);
+			} else if (complexity === "medium") {
+				// Balanced — moderate cost/capability, favor speed
+				score += 3 - Math.abs(cap.costTier - 2) + (4 - cap.speedTier);
 			} else if (complexity === "complex") {
 				// Prefer capable agents, cost is less important
 				score += cap.costTier; // Higher cost often = more capable

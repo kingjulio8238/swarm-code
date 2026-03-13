@@ -1,8 +1,11 @@
 /**
  * Aider agent backend.
  *
- * Runs tasks via `aider --yes --no-auto-commits --message "prompt"` subprocess.
+ * Runs tasks via `aider --yes-always --no-auto-commits --message "prompt"` subprocess.
  * Aider is a git-aware AI coding assistant that makes targeted edits.
+ *
+ * Output format: Plain text (no JSON mode available).
+ * Edit confirmations appear as "Applied edit to <file>" lines.
  */
 
 import { spawn } from "node:child_process";
@@ -53,7 +56,7 @@ function buildAgentEnv(): Record<string, string | undefined> {
 /** Map provider/model format to aider model flag. */
 function resolveModel(model: string): string {
 	// Aider accepts provider/model format natively (e.g., "anthropic/claude-sonnet-4-6")
-	// so we can pass it through directly
+	// It also has short aliases: sonnet, opus, haiku, 4o, etc.
 	return model;
 }
 
@@ -65,6 +68,7 @@ function extractFilesChanged(output: string): string[] {
 	//   "Applied edit to src/auth.ts"
 	//   "Wrote src/auth.ts"
 	//   "Committing src/auth.ts ..."
+	//   "Created new file src/utils.ts"
 	const patterns = [
 		/Applied edit to\s+(.+?)(?:\s*$)/gm,
 		/Wrote\s+(.+?)(?:\s*$)/gm,
@@ -76,7 +80,7 @@ function extractFilesChanged(output: string): string[] {
 		let match;
 		while ((match = pattern.exec(output)) !== null) {
 			const file = match[1].trim();
-			if (file && !file.includes(" ")) {
+			if (file) {
 				files.push(file);
 			}
 		}
@@ -97,11 +101,13 @@ const aiderProvider: AgentProvider = {
 		const startTime = Date.now();
 
 		const args = [
-			"--yes",            // Auto-confirm all prompts
-			"--no-auto-commits", // Don't auto-commit (worktree manager handles commits)
-			"--no-git",          // Don't use git features (we manage worktrees ourselves)
-			"--no-pretty",       // Disable pretty output for cleaner parsing
-			"--no-stream",       // Don't stream (capture full output)
+			"--yes-always",          // Auto-confirm all prompts (except shell commands)
+			"--no-auto-commits",     // Don't auto-commit (worktree manager handles commits)
+			"--no-pretty",           // Disable ANSI colors for clean parsing
+			"--no-stream",           // Don't stream (capture full output)
+			"--no-fancy-input",      // Disable prompt toolkit input
+			"--no-suggest-shell-commands", // Suppress shell command suggestions
+			"--no-detect-urls",      // Suppress URL detection prompts
 		];
 
 		if (model) {
@@ -114,7 +120,7 @@ const aiderProvider: AgentProvider = {
 		// Add specific files to edit if provided
 		if (files && files.length > 0) {
 			for (const file of files) {
-				args.push(file);
+				args.push("--file", file);
 			}
 		}
 

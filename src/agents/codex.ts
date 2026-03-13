@@ -1,8 +1,13 @@
 /**
  * Codex CLI agent backend (OpenAI).
  *
- * Runs tasks via `codex --quiet --approval-mode full-auto "prompt"` subprocess.
+ * Runs tasks via `codex exec --json --full-auto "prompt"` subprocess.
  * Codex CLI is OpenAI's open-source coding agent.
+ *
+ * Output format: JSONL events streamed to stdout, with event types:
+ *   - thread.started, turn.started, turn.completed, turn.failed
+ *   - item.started, item.updated, item.completed
+ * Item types: assistant_message, command_execution, file_change, etc.
  */
 
 import { spawn } from "node:child_process";
@@ -28,11 +33,12 @@ function buildAgentEnv(): Record<string, string | undefined> {
 		SHELL: process.env.SHELL,
 		TERM: process.env.TERM,
 		LANG: process.env.LANG,
-		// Codex uses OPENAI_API_KEY
+		// Codex uses CODEX_API_KEY or OPENAI_API_KEY
+		CODEX_API_KEY: process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY,
 		OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-		// May also need these for provider flexibility
-		ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-		GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+		OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+		// Codex config home
+		CODEX_HOME: process.env.CODEX_HOME,
 		// Git config
 		GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME,
 		GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL,
@@ -47,8 +53,57 @@ function buildAgentEnv(): Record<string, string | undefined> {
 /** Map provider/model format to codex model flag. */
 function resolveModel(model: string): string {
 	// Strip provider prefix (e.g., "openai/o3" → "o3")
-	const modelName = model.includes("/") ? model.split("/").pop()! : model;
-	return modelName;
+	return model.includes("/") ? model.split("/").pop()! : model;
+}
+
+interface CodexJsonEvent {
+	type: string;
+	item_type?: string;
+	message?: { content?: string };
+	content?: string;
+	error?: string;
+	usage?: { input_tokens?: number; output_tokens?: number };
+	file_path?: string;
+}
+
+/** Parse JSONL output to extract result and file changes. */
+function parseCodexJsonl(stdout: string): {
+	output: string;
+	filesChanged: string[];
+	success: boolean;
+	error?: string;
+} {
+	const lines = stdout.trim().split("\n").filter(Boolean);
+	let output = "";
+	const filesChanged: string[] = [];
+	let success = true;
+	let error: string | undefined;
+
+	for (const line of lines) {
+		try {
+			const event: CodexJsonEvent = JSON.parse(line);
+
+			if (event.type === "turn.failed") {
+				success = false;
+				error = event.error || "Turn failed";
+			}
+
+			if (event.type === "item.completed") {
+				if (event.item_type === "assistant_message") {
+					// Capture assistant messages
+					const content = event.message?.content || event.content || "";
+					if (content) output += (output ? "\n" : "") + content;
+				}
+				if (event.item_type === "file_change" && event.file_path) {
+					filesChanged.push(event.file_path);
+				}
+			}
+		} catch {
+			// Non-JSON line — ignore
+		}
+	}
+
+	return { output, filesChanged: [...new Set(filesChanged)], success, error };
 }
 
 const codexProvider: AgentProvider = {
@@ -63,8 +118,12 @@ const codexProvider: AgentProvider = {
 		const startTime = Date.now();
 
 		const args = [
-			"--quiet",
-			"--approval-mode", "full-auto",
+			"exec",
+			"--json",
+			"--full-auto",
+			"--ephemeral",
+			"--skip-git-repo-check",
+			"--cd", workDir,
 		];
 
 		if (model) {
@@ -120,28 +179,16 @@ const codexProvider: AgentProvider = {
 			proc.on("close", (code) => {
 				const durationMs = Date.now() - startTime;
 
-				// Codex outputs plain text — extract any file change indicators
-				const filesChanged: string[] = [];
-
-				// Codex mentions files it edits in its output
-				const editPatterns = [
-					/(?:wrote|created|modified|updated|edited)\s+`?([^\s`]+\.\w+)`?/gi,
-					/(?:writing to|saving)\s+`?([^\s`]+\.\w+)`?/gi,
-				];
-				for (const pattern of editPatterns) {
-					let match;
-					while ((match = pattern.exec(stdout)) !== null) {
-						filesChanged.push(match[1]);
-					}
-				}
+				// Parse JSONL events
+				const parsed = parseCodexJsonl(stdout);
 
 				doResolve({
-					success: code === 0,
-					output: stdout || stderr,
-					filesChanged: [...new Set(filesChanged)],
+					success: code === 0 && parsed.success,
+					output: parsed.output || stdout || stderr,
+					filesChanged: parsed.filesChanged,
 					diff: "", // Diff is captured separately by worktree manager
 					durationMs,
-					error: code !== 0 ? `codex exited with code ${code}${stderr ? `: ${stderr.slice(0, 500)}` : ""}` : undefined,
+					error: parsed.error || (code !== 0 ? `codex exited with code ${code}${stderr ? `: ${stderr.slice(0, 500)}` : ""}` : undefined),
 				});
 			});
 
