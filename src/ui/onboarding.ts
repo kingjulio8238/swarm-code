@@ -220,16 +220,45 @@ const c = (s: string) => dim(s);    // connection
 const o = (s: string) => coral(s);  // orchestrator (center)
 
 /**
- * 3x3 mesh network — the swarm logo.
- * Center node is the orchestrator (coral), outer nodes are agents (cyan).
+ * 7x3 mesh network — the swarm logo.
+ * Wide grid of agent nodes with the orchestrator (coral) at center.
+ * Renders as ~25 chars wide, 5 lines tall.
  */
-const SWARM_ART = [
-	`  ${n("\u25CF")}${c("\u2500")}${n("\u25CF")}${c("\u2500")}${n("\u25CF")}`,
-	`  ${c("\u2502")}${c("\u2572")}${c("\u2502")}${c("\u2571")}${c("\u2502")}`,
-	`  ${n("\u25CF")}${c("\u2500")}${o("\u25C6")}${c("\u2500")}${n("\u25CF")}`,
-	`  ${c("\u2502")}${c("\u2571")}${c("\u2502")}${c("\u2572")}${c("\u2502")}`,
-	`  ${n("\u25CF")}${c("\u2500")}${n("\u25CF")}${c("\u2500")}${n("\u25CF")}`,
-];
+function buildSwarmArt(): string[] {
+	const COLS = 7;
+	const CENTER = 3;
+
+	function nodeRow(showCenter: boolean): string {
+		const parts: string[] = [];
+		for (let i = 0; i < COLS; i++) {
+			if (i > 0) parts.push(c("\u2500\u2500\u2500"));
+			parts.push(showCenter && i === CENTER ? o("\u25C6") : n("\u25CF"));
+		}
+		return parts.join("");
+	}
+
+	function diagRow(startBackslash: boolean): string {
+		const parts: string[] = [];
+		for (let i = 0; i < COLS; i++) {
+			parts.push(c("\u2502"));
+			if (i < COLS - 1) {
+				const back = (i % 2 === 0) === startBackslash;
+				parts.push(` ${c(back ? "\u2572" : "\u2571")} `);
+			}
+		}
+		return parts.join("");
+	}
+
+	return [
+		nodeRow(false),
+		diagRow(true),
+		nodeRow(true),
+		diagRow(false),
+		nodeRow(false),
+	];
+}
+
+const SWARM_ART = buildSwarmArt();
 
 // ── Two-column renderer ──────────────────────────────────────────────────────
 
