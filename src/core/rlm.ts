@@ -1,11 +1,13 @@
 /**
  * RLM Loop — implements Algorithm 1 from "Recursive Language Models" (arXiv:2512.24601).
+ * Extended for swarm-cli with thread handler wiring.
  *
  * The loop works as follows:
  *   1. Inject the full context into a persistent Python REPL as a variable.
  *   2. Send the LLM metadata about the context plus the user's query.
  *      The LLM writes Python code that can inspect/slice/query `context`,
- *      call `llm_query()` recursively, and call FINAL() when done.
+ *      call `llm_query()` recursively, call `thread()` to spawn agents,
+ *      and call FINAL() when done.
  *   3. Execute the code, capture stdout.
  *   4. If FINAL is set, return it. Otherwise loop.
  */
@@ -19,8 +21,8 @@ import {
 	type TextContent,
 	type UserMessage,
 } from "@mariozechner/pi-ai";
-import type { ExecResult, PythonRepl } from "./repl.js";
-import { loadConfig, type RlmConfig } from "./config.js";
+import type { ExecResult, PythonRepl, ThreadHandler, MergeHandler } from "./repl.js";
+import { loadConfig, type SwarmConfig } from "../config.js";
 
 // ── Load config ─────────────────────────────────────────────────────────────
 
@@ -37,6 +39,12 @@ export interface RlmOptions {
 	onProgress?: (info: RlmProgress) => void;
 	onSubQueryStart?: (info: SubQueryStartInfo) => void;
 	onSubQuery?: (info: SubQueryInfo) => void;
+	/** Custom system prompt (used for swarm mode) */
+	systemPrompt?: string;
+	/** Thread handler for swarm mode */
+	threadHandler?: ThreadHandler;
+	/** Merge handler for swarm mode */
+	mergeHandler?: MergeHandler;
 }
 
 export interface RlmProgress {
@@ -74,9 +82,9 @@ export interface RlmResult {
 	completed: boolean;
 }
 
-// ── System prompt (inspired by fast-rlm) ────────────────────────────────────
+// ── Default system prompt (RLM text-processing mode) ────────────────────────
 
-function buildSystemPrompt(): string {
+function buildDefaultSystemPrompt(): string {
 	return `You are a Recursive Language Model (RLM) agent. You process large contexts by writing Python code that runs in a persistent REPL.
 
 ## Available in the REPL
@@ -214,7 +222,10 @@ function extractCodeFromResponse(response: AssistantMessage): string | null {
 				trimmed.includes("for ") && trimmed.includes(":") ||
 				trimmed.includes("def ") && trimmed.includes(":") ||
 				trimmed.includes("FINAL(") ||
-				trimmed.includes("llm_query("))
+				trimmed.includes("llm_query(") ||
+				trimmed.includes("thread(") ||
+				trimmed.includes("async_thread(") ||
+				trimmed.includes("merge_threads("))
 		) {
 			return trimmed;
 		}
@@ -233,7 +244,11 @@ function truncateOutput(text: string): string {
 // ── Main loop ───────────────────────────────────────────────────────────────
 
 export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
-	const { context, query, model, repl, signal, onProgress, onSubQueryStart, onSubQuery } = options;
+	const {
+		context, query, model, repl, signal,
+		onProgress, onSubQueryStart, onSubQuery,
+		systemPrompt, threadHandler, mergeHandler,
+	} = options;
 
 	let totalSubQueries = 0;
 	let iterationSubQueries = 0;
@@ -287,9 +302,19 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 		await repl.setContext(context);
 		await repl.resetFinal();
 		repl.setLlmQueryHandler(llmQueryHandler);
+
+		// Wire thread and merge handlers if provided (swarm mode)
+		if (threadHandler) {
+			repl.setThreadHandler(threadHandler);
+		}
+		if (mergeHandler) {
+			repl.setMergeHandler(mergeHandler);
+		}
 	}
 
 	await initRepl();
+
+	const activeSystemPrompt = systemPrompt || buildDefaultSystemPrompt();
 
 	const metadata = buildContextMetadata(context);
 	const conversationHistory: Message[] = [
@@ -320,14 +345,14 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 			subQueries: totalSubQueries,
 			phase: "generating_code",
 			userMessage: userMsgText,
-			systemPrompt: iteration === 1 ? buildSystemPrompt() : undefined,
+			systemPrompt: iteration === 1 ? activeSystemPrompt : undefined,
 		});
 
 		let response;
 		try {
 			response = await raceAbort(
 				completeSimple(model, {
-					systemPrompt: buildSystemPrompt(),
+					systemPrompt: activeSystemPrompt,
 					messages: conversationHistory,
 				}),
 				signal,

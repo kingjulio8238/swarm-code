@@ -1,46 +1,47 @@
 {
-  "name": "rlm-cli",
-  "version": "0.4.19",
-  "description": "Standalone CLI for Recursive Language Models (RLMs) — implements Algorithm 1 from arXiv:2512.24601",
+  "name": "swarm-cli",
+  "version": "0.1.0",
+  "description": "Open-source swarm-native coding agent orchestrator — spawns parallel coding agents in isolated git worktrees, built on RLM (arXiv:2512.24601)",
   "type": "module",
   "bin": {
-    "rlm": "./bin/rlm.mjs"
+    "swarm": "./bin/swarm.mjs"
   },
   "main": "dist/main.js",
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
-    "dist/runtime.py",
+    "dist/core/runtime.py",
     "bin"
   ],
   "scripts": {
     "dev": "tsx src/main.ts",
-    "build": "tsc && cp src/runtime.py dist/",
+    "build": "tsc && cp src/core/runtime.py dist/core/",
     "start": "node dist/main.js",
     "cli": "tsx src/cli.ts",
+    "swarm": "tsx src/main.ts",
     "bench:oolong": "tsx benchmarks/oolong_synth.ts",
     "bench:longbench": "tsx benchmarks/longbench_narrativeqa.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
+    "swarm",
+    "coding-agent",
+    "orchestrator",
     "rlm",
     "recursive-language-model",
     "llm",
     "cli",
     "agent",
-    "ai",
-    "long-context",
-    "python",
-    "repl"
+    "opencode",
+    "worktree",
+    "parallel",
+    "ai"
   ],
-  "author": "Vipul Maheshwari <vim.code.level@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/viplismism/rlm-cli.git"
+    "url": "https://github.com/juliansaks/swarm-cli.git"
   },
-  "homepage": "https://github.com/viplismism/rlm-cli",
-  "bugs": "https://github.com/viplismism/rlm-cli/issues",
   "dependencies": {
     "@mariozechner/pi-ai": "^0.55.1"
   },

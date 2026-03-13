@@ -18,8 +18,8 @@ import * as fs from "node:fs";
 
 // Dynamic imports — ensures env.js has set process.env BEFORE pi-ai loads
 const { getModels, getProviders } = await import("@mariozechner/pi-ai");
-const { PythonRepl } = await import("./repl.js");
-const { runRlmLoop } = await import("./rlm.js");
+const { PythonRepl } = await import("./core/repl.js");
+const { runRlmLoop } = await import("./core/rlm.js");
 
 import type { Api, Model } from "@mariozechner/pi-ai";
 
@@ -27,7 +27,7 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 
 function usage(): never {
 	console.error(`
-rlm-cli — Recursive Language Model CLI (arXiv:2512.24601)
+swarm run — Recursive Language Model CLI (arXiv:2512.24601)
 
 USAGE
   rlm run [OPTIONS] "<query>"

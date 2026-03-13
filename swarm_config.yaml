@@ -1,0 +1,63 @@
+# Swarm CLI Configuration
+# Extends RLM config (arXiv:2512.24601) with swarm orchestration fields
+
+# ── RLM settings (inherited) ────────────────────────────────────────────────
+
+# Maximum iterations per query before giving up
+max_iterations: 20
+
+# Maximum recursive sub-agent depth
+max_depth: 3
+
+# Maximum total sub-queries across all depths
+max_sub_queries: 50
+
+# Truncate REPL output beyond this many characters
+truncate_len: 5000
+
+# Preview lines shown in context metadata
+metadata_preview_lines: 20
+
+# ── Swarm settings ──────────────────────────────────────────────────────────
+
+# Max concurrent threads (worktrees active simultaneously)
+max_threads: 5
+
+# Max threads per session
+max_total_threads: 20
+
+# Per-thread timeout (5 minutes)
+thread_timeout_ms: 300000
+
+# Per-thread cost cap (USD)
+max_thread_budget_usd: 1.00
+
+# Total session cost cap (USD)
+max_session_budget_usd: 10.00
+
+# Default agent backend (opencode, direct-llm)
+default_agent: opencode
+
+# Default model for coding agents (provider/model-id format)
+default_model: anthropic/claude-sonnet-4-6
+
+# Auto model selection (Phase 3)
+auto_model_selection: false
+
+# Compression strategy for thread results (structured, llm-summary, diff-only, truncate)
+compression_strategy: structured
+
+# Max tokens for compressed results
+compression_max_tokens: 1000
+
+# Directory for worktrees (relative to repo root)
+worktree_base_dir: .swarm-worktrees
+
+# Automatically cleanup worktrees after session
+auto_cleanup_worktrees: true
+
+# Episodic memory (Phase 4)
+episodic_memory_enabled: false
+
+# Memory storage directory
+memory_dir: ~/.swarm/memory

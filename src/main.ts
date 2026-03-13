@@ -1,33 +1,48 @@
 #!/usr/bin/env tsx
 /**
- * rlm — Recursive Language Model CLI
+ * swarm — Swarm-native coding agent orchestrator
  *
- * Entry point for the `rlm` command.
+ * Entry point for the `swarm` command.
  *
- *   rlm              → interactive terminal (default)
- *   rlm run          → single-shot CLI run
- *   rlm help         → show help
+ *   swarm                  → interactive terminal (RLM mode, default)
+ *   swarm run              → single-shot RLM CLI run
+ *   swarm viewer           → browse trajectory files
+ *   swarm benchmark        → run benchmarks
+ *   swarm --dir ./project  → swarm mode (coding agent orchestration)
  */
 
 const HELP = `
 \x1b[36m╔══════════════════════════════════════════════════════════════╗
-║               rlm — Recursive Language Models                ║
-║          CLI for large-context LLM processing                ║
-║              arXiv:2512.24601                                ║
+║          swarm — Swarm-Native Coding Agent                 ║
+║     Open-source orchestrator for parallel coding agents     ║
+║              Built on RLM (arXiv:2512.24601)               ║
 ╚══════════════════════════════════════════════════════════════╝\x1b[0m
 
-\x1b[1mUSAGE\x1b[0m
-  \x1b[33mrlm\x1b[0m                          Interactive terminal (default)
-  \x1b[33mrlm run\x1b[0m [options] "<query>"  Run a single query
-  \x1b[33mrlm viewer\x1b[0m                    Browse saved trajectory files
-  \x1b[33mrlm benchmark\x1b[0m <name> [--idx]  Run benchmark (direct LLM vs RLM)
+\x1b[1mSWARM MODE\x1b[0m (coding agent orchestration)
+  \x1b[33mswarm\x1b[0m --dir ./project "add error handling to all API routes"
+  \x1b[33mswarm\x1b[0m --dir ./project --orchestrator claude-sonnet-4-6 "task"
+  \x1b[33mswarm\x1b[0m --dir ./project --dry-run "plan refactor"
+  \x1b[33mswarm\x1b[0m --dir ./project --max-budget 5.00 "task"
+
+\x1b[1mRLM MODE\x1b[0m (text processing, inherited from rlm-cli)
+  \x1b[33mswarm\x1b[0m                          Interactive terminal (default)
+  \x1b[33mswarm run\x1b[0m [options] "<query>"  Run a single query
+  \x1b[33mswarm viewer\x1b[0m                    Browse saved trajectory files
+  \x1b[33mswarm benchmark\x1b[0m <name> [--idx]  Run benchmark
+
+\x1b[1mSWARM OPTIONS\x1b[0m
+  --dir <path>           Target repository directory
+  --orchestrator <model> Model for the orchestrator LLM (default: RLM_MODEL)
+  --agent <backend>      Default agent backend (default: opencode)
+  --dry-run              Plan only, don't spawn threads
+  --max-budget <usd>     Maximum session budget in USD
+  --verbose              Show detailed progress
 
 \x1b[1mRUN OPTIONS\x1b[0m
   --model <id>     Override model (default: RLM_MODEL from .env)
   --file <path>    Read context from a file
   --url <url>      Fetch context from a URL
   --stdin          Read context from stdin
-  --verbose        Show iteration progress
 
 \x1b[1mCONFIGURATION\x1b[0m
   .env file (pick one provider):
@@ -35,15 +50,24 @@ const HELP = `
     OPENAI_API_KEY=sk-...
     GEMINI_API_KEY=AIza...
 
-  rlm_config.yaml:
-    max_iterations: 20
-    max_depth: 3
-    max_sub_queries: 50
-    truncate_len: 5000
+  swarm_config.yaml:
+    max_threads: 5
+    default_agent: opencode
+    compression_strategy: structured
 `.trim();
 
 async function main() {
 	const args = process.argv.slice(2);
+
+	// Check if this is swarm mode (has --dir flag)
+	const dirIdx = args.indexOf("--dir");
+	if (dirIdx !== -1) {
+		// Swarm mode — dynamic import to avoid loading all swarm deps upfront
+		const { runSwarmMode } = await import("./swarm.js");
+		await runSwarmMode(args);
+		return;
+	}
+
 	const command = args[0] || "interactive";
 
 	switch (command) {
@@ -55,7 +79,6 @@ async function main() {
 
 		case "viewer":
 		case "view": {
-			// Strip the subcommand from argv so viewer.ts doesn't see it as a file path
 			process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
 			await import("./viewer.js");
 			break;
@@ -99,13 +122,10 @@ async function main() {
 					});
 				});
 			} else {
-				console.log(`\x1b[36m\x1b[1mrlm benchmark\x1b[0m — Run direct LLM vs RLM comparison\n`);
+				console.log(`\x1b[36m\x1b[1mswarm benchmark\x1b[0m — Run direct LLM vs RLM comparison\n`);
 				console.log(`\x1b[1mUSAGE\x1b[0m`);
-				console.log(`  \x1b[33mrlm benchmark oolong\x1b[0m    [--idx N]  Oolong Synth (synthetic long-context)`);
-				console.log(`  \x1b[33mrlm benchmark longbench\x1b[0m [--idx N]  LongBench NarrativeQA (reading comprehension)\n`);
-				console.log(`Python dependencies are auto-installed into .venv on first run.\n`);
-				console.log(`Each benchmark loads a dataset example, runs it through both direct LLM`);
-				console.log(`and RLM, then prints a side-by-side comparison with timing.`);
+				console.log(`  \x1b[33mswarm benchmark oolong\x1b[0m    [--idx N]  Oolong Synth`);
+				console.log(`  \x1b[33mswarm benchmark longbench\x1b[0m [--idx N]  LongBench NarrativeQA\n`);
 			}
 			break;
 		}
@@ -127,21 +147,27 @@ async function main() {
 				const __dir = dirname(fileURLToPath(import.meta.url));
 				const pkgPath = join(__dir, "..", "package.json");
 				const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-				console.log(`rlm v${pkg.version}`);
+				console.log(`swarm v${pkg.version}`);
 			} catch {
-				console.log("rlm (version unknown)");
+				console.log("swarm (version unknown)");
 			}
 			break;
 		}
 
 		default: {
 			if (command.startsWith("--")) {
-				// Flags without subcommand → assume "run", pass all args through
-				process.argv = [process.argv[0], process.argv[1], ...args];
-				await import("./cli.js");
+				// Flags without subcommand — check for --dir (swarm mode)
+				if (command === "--dir") {
+					const { runSwarmMode } = await import("./swarm.js");
+					await runSwarmMode(args);
+				} else {
+					// Assume "run" mode, pass all args through
+					process.argv = [process.argv[0], process.argv[1], ...args];
+					await import("./cli.js");
+				}
 			} else {
 				console.error(`Unknown command: ${command}`);
-				console.error('Run "rlm help" for usage information.');
+				console.error('Run "swarm help" for usage information.');
 				process.exit(1);
 			}
 		}

@@ -39,7 +39,12 @@ function parseEnvFile(filePath: string): Map<string, string> {
 const fileVars = new Map<string, string>();
 
 // 1. Load persistent credentials (lowest priority file)
-const credVars = parseEnvFile(path.join(os.homedir(), ".rlm", "credentials"));
+// Check both swarm and rlm credential locations
+const credVars = parseEnvFile(path.join(os.homedir(), ".swarm", "credentials"));
+const rlmCreds = parseEnvFile(path.join(os.homedir(), ".rlm", "credentials"));
+for (const [k, v] of rlmCreds) {
+	if (!credVars.has(k)) credVars.set(k, v);
+}
 for (const [k, v] of credVars) fileVars.set(k, v);
 
 // 2. Load .env from package root (overwrites credentials)

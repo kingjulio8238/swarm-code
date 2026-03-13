@@ -1,19 +1,19 @@
 """
-RLM Runtime — Python-side helpers for the Recursive Language Model CLI.
+Swarm Runtime — Python-side helpers for the swarm-cli orchestrator.
 
-This module runs in a persistent Python subprocess. It provides:
-  - `context`: the full prompt/document as a string variable
-  - `llm_query(sub_context, instruction)`: bridge to parent LLM for sub-queries
-  - `FINAL(x)`: set final answer string and terminate loop
-  - `FINAL_VAR(x)`: set final answer from a variable
+Extends the RLM runtime with thread spawning primitives:
+  - `thread(task, context, agent, model, files)`: spawn a coding agent thread
+  - `async_thread(...)`: async version for asyncio.gather()
+  - `merge_threads()`: merge all completed thread branches
 
 Communication protocol (line-delimited JSON over stdio):
   -> stdout: {"type":"llm_query","sub_context":"...","instruction":"...","id":"..."}
   <- stdin:  {"type":"llm_result","id":"...","result":"..."}
+  -> stdout: {"type":"thread_request","id":"...","task":"...","context":"...","agent_backend":"...","model":"...","files":[]}
+  <- stdin:  {"type":"thread_result","id":"...","result":"...","success":true,"files_changed":[],"duration_ms":0}
+  -> stdout: {"type":"merge_request","id":"..."}
+  <- stdin:  {"type":"merge_result","id":"...","result":"...","success":true}
   -> stdout: {"type":"exec_done","stdout":"...","stderr":"...","has_final":bool,"final_value":"..."|null}
-
-All protocol I/O uses saved references to the original sys.stdout/sys.stdin
-so that exec'd code can freely redirect sys.stdout for print() capture.
 """
 
 import json
@@ -32,7 +32,7 @@ _real_stdin = sys.stdin
 # Lock for stdout writes only
 _write_lock = threading.Lock()
 
-# Per-request events and results for concurrent llm_query calls
+# Per-request events and results for concurrent llm_query/thread calls
 _pending_results: dict[str, threading.Event] = {}
 _result_store: dict[str, str] = {}
 
@@ -68,7 +68,7 @@ def FINAL_VAR(x):
 def _stdin_reader_loop() -> None:
     """Dedicated thread: reads all stdin lines and dispatches them.
 
-    - llm_result messages go directly to waiting llm_query threads
+    - llm_result/thread_result/merge_result messages go to waiting threads
     - All other messages (exec, set_context, etc.) go to _command_queue
     """
     while True:
@@ -91,10 +91,10 @@ def _stdin_reader_loop() -> None:
             continue
 
         msg_type = msg.get("type")
-        if msg_type == "llm_result":
+        if msg_type in ("llm_result", "thread_result", "merge_result"):
             rid = msg.get("id", "")
             if rid in _pending_results:
-                _result_store[rid] = msg.get("result", "")
+                _result_store[rid] = json.dumps(msg) if msg_type != "llm_result" else msg.get("result", "")
                 _pending_results[rid].set()
         elif msg_type == "shutdown":
             _command_queue.put(None)
@@ -104,11 +104,7 @@ def _stdin_reader_loop() -> None:
 
 
 def llm_query(sub_context: str, instruction: str = "") -> str:
-    """Send a sub-context and instruction to the parent LLM and return the response.
-
-    Thread-safe: multiple concurrent calls (via async_llm_query + asyncio.gather)
-    run in parallel — a dedicated reader thread dispatches results.
-    """
+    """Send a sub-context and instruction to the parent LLM and return the response."""
     if not instruction:
         instruction = ""
 
@@ -126,24 +122,104 @@ def llm_query(sub_context: str, instruction: str = "") -> str:
         _real_stdout.write(json.dumps(request) + "\n")
         _real_stdout.flush()
 
-    # Wait for our result (reader thread dispatches it)
     event.wait()
-
     _pending_results.pop(request_id, None)
     return _result_store.pop(request_id, "")
 
 
 async def async_llm_query(sub_context: str, instruction: str = "") -> str:
-    """Async wrapper around llm_query for use with asyncio.gather().
+    """Async wrapper around llm_query for use with asyncio.gather()."""
+    return await asyncio.get_event_loop().run_in_executor(None, llm_query, sub_context, instruction)
+
+
+def thread(task: str, context: str = "", agent: str = "opencode", model: str = "", files=None) -> str:
+    """Spawn a coding agent thread in an isolated git worktree.
+
+    Args:
+        task: What the agent should do (be specific)
+        context: Additional context to pass to the agent
+        agent: Agent backend name ("opencode", "direct-llm", etc.)
+        model: Model ID in provider/model-id format (e.g., "anthropic/claude-sonnet-4-6")
+        files: List of relevant file paths (hints for the agent)
+
+    Returns:
+        Compressed result string with status, files changed, diff, and output summary.
+    """
+    if files is None:
+        files = []
+
+    request_id = uuid.uuid4().hex[:12]
+    event = threading.Event()
+    _pending_results[request_id] = event
+
+    request = {
+        "type": "thread_request",
+        "id": request_id,
+        "task": task,
+        "context": context,
+        "agent_backend": agent,
+        "model": model,
+        "files": files,
+    }
+    with _write_lock:
+        _real_stdout.write(json.dumps(request) + "\n")
+        _real_stdout.flush()
+
+    event.wait()
+    _pending_results.pop(request_id, None)
+
+    raw = _result_store.pop(request_id, "{}")
+    try:
+        result_msg = json.loads(raw)
+        return result_msg.get("result", raw)
+    except (json.JSONDecodeError, AttributeError):
+        return raw
+
+
+async def async_thread(task: str, context: str = "", agent: str = "opencode", model: str = "", files=None) -> str:
+    """Async version of thread() for use with asyncio.gather().
 
     Usage:
         import asyncio
         results = await asyncio.gather(
-            async_llm_query(chunk1, "summarize"),
-            async_llm_query(chunk2, "summarize"),
+            async_thread("fix auth", files=["src/auth.ts"]),
+            async_thread("fix routing", files=["src/router.ts"]),
         )
     """
-    return await asyncio.get_event_loop().run_in_executor(None, llm_query, sub_context, instruction)
+    if files is None:
+        files = []
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: thread(task, context, agent, model, files)
+    )
+
+
+def merge_threads() -> str:
+    """Merge all completed thread branches back into the main branch.
+
+    Returns:
+        Merge status string.
+    """
+    request_id = uuid.uuid4().hex[:12]
+    event = threading.Event()
+    _pending_results[request_id] = event
+
+    request = {
+        "type": "merge_request",
+        "id": request_id,
+    }
+    with _write_lock:
+        _real_stdout.write(json.dumps(request) + "\n")
+        _real_stdout.flush()
+
+    event.wait()
+    _pending_results.pop(request_id, None)
+
+    raw = _result_store.pop(request_id, "{}")
+    try:
+        result_msg = json.loads(raw)
+        return result_msg.get("result", raw)
+    except (json.JSONDecodeError, AttributeError):
+        return raw
 
 
 def _refresh_user_ns() -> None:
@@ -153,6 +229,9 @@ def _refresh_user_ns() -> None:
         'context': context,
         'llm_query': llm_query,
         'async_llm_query': async_llm_query,
+        'thread': thread,
+        'async_thread': async_thread,
+        'merge_threads': merge_threads,
         'FINAL': FINAL,
         'FINAL_VAR': FINAL_VAR,
     })
@@ -170,17 +249,12 @@ def _execute_code(code: str) -> None:
     try:
         sys.stdout = captured_stdout
         sys.stderr = captured_stderr
-        # Support both sync and async code (await expressions)
         try:
-            # Try to compile as regular code first
             compiled = compile(code, "<repl>", "exec")
             exec(compiled, _user_ns)
         except SyntaxError as e:
             if "await" in str(code):
-                # Code contains await — run it in an async context
-                # We must copy locals back to user namespace so variables persist across iterations
-                # But we must NOT clobber runtime-critical symbols
-                _protected = {'context', 'llm_query', 'async_llm_query', 'FINAL', 'FINAL_VAR', '__builtins__'}
+                _protected = {'context', 'llm_query', 'async_llm_query', 'thread', 'async_thread', 'merge_threads', 'FINAL', 'FINAL_VAR', '__builtins__'}
                 async_code = "async def __async_exec__():\n"
                 for line in code.split("\n"):
                     async_code += f"    {line}\n"

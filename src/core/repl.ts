@@ -1,9 +1,11 @@
 /**
- * Persistent Python REPL manager for the RLM CLI.
+ * Persistent Python REPL manager for swarm-cli.
  *
  * Spawns a single Python subprocess running `runtime.py` and keeps it alive
  * across multiple RLM iterations. Communication uses line-delimited JSON
  * over stdin/stdout.
+ *
+ * Extended from rlm-cli with thread_request and merge_request handlers.
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
@@ -24,6 +26,18 @@ export interface ExecResult {
 
 /** Callback the host provides to handle llm_query() calls from Python. */
 export type LlmQueryHandler = (subContext: string, instruction: string) => Promise<string>;
+
+/** Callback the host provides to handle thread() calls from Python. */
+export type ThreadHandler = (
+	task: string,
+	context: string,
+	agentBackend: string,
+	model: string,
+	files: string[],
+) => Promise<{ result: string; success: boolean; filesChanged: string[]; durationMs: number }>;
+
+/** Callback the host provides to handle merge_threads() calls from Python. */
+export type MergeHandler = () => Promise<{ result: string; success: boolean }>;
 
 // ── Inbound message types from Python ───────────────────────────────────────
 
@@ -46,6 +60,21 @@ interface LlmQueryMessage {
 	id: string;
 }
 
+interface ThreadRequestMessage {
+	type: "thread_request";
+	id: string;
+	task: string;
+	context: string;
+	agent_backend: string;
+	model: string;
+	files: string[];
+}
+
+interface MergeRequestMessage {
+	type: "merge_request";
+	id: string;
+}
+
 interface ContextSetMessage {
 	type: "context_set";
 }
@@ -54,7 +83,14 @@ interface FinalResetMessage {
 	type: "final_reset";
 }
 
-type InboundMessage = ReadyMessage | ExecDoneMessage | LlmQueryMessage | ContextSetMessage | FinalResetMessage;
+type InboundMessage =
+	| ReadyMessage
+	| ExecDoneMessage
+	| LlmQueryMessage
+	| ThreadRequestMessage
+	| MergeRequestMessage
+	| ContextSetMessage
+	| FinalResetMessage;
 
 // ── REPL class ──────────────────────────────────────────────────────────────
 
@@ -62,6 +98,8 @@ export class PythonRepl {
 	private proc: ChildProcess | null = null;
 	private rl: readline.Interface | null = null;
 	private llmQueryHandler: LlmQueryHandler | null = null;
+	private threadHandler: ThreadHandler | null = null;
+	private mergeHandler: MergeHandler | null = null;
 
 	/**
 	 * Pending resolvers for messages we're waiting on from Python.
@@ -105,7 +143,7 @@ export class PythonRepl {
 		this.proc.stderr!.on("data", (chunk: Buffer) => {
 			const text = chunk.toString();
 			if (text.trim()) {
-				process.stderr.write(`[rlm-repl-python] ${text}`);
+				process.stderr.write(`[swarm-repl-python] ${text}`);
 			}
 		});
 
@@ -129,6 +167,16 @@ export class PythonRepl {
 	/** Register the callback that handles llm_query() calls from Python. */
 	setLlmQueryHandler(handler: LlmQueryHandler): void {
 		this.llmQueryHandler = handler;
+	}
+
+	/** Register the callback that handles thread() calls from Python. */
+	setThreadHandler(handler: ThreadHandler): void {
+		this.threadHandler = handler;
+	}
+
+	/** Register the callback that handles merge_threads() calls from Python. */
+	setMergeHandler(handler: MergeHandler): void {
+		this.mergeHandler = handler;
 	}
 
 	/** Inject the full context string into the Python REPL. */
@@ -203,9 +251,24 @@ export class PythonRepl {
 			return;
 		}
 
+		// Handle async message types (don't go through pending)
 		if (msg.type === "llm_query") {
 			this.handleLlmQueryMessage(msg as LlmQueryMessage).catch((err) => {
-				process.stderr.write(`[rlm] llm_query handler error: ${err?.message || err}\n`);
+				process.stderr.write(`[swarm] llm_query handler error: ${err?.message || err}\n`);
+			});
+			return;
+		}
+
+		if (msg.type === "thread_request") {
+			this.handleThreadRequestMessage(msg as ThreadRequestMessage).catch((err) => {
+				process.stderr.write(`[swarm] thread_request handler error: ${err?.message || err}\n`);
+			});
+			return;
+		}
+
+		if (msg.type === "merge_request") {
+			this.handleMergeRequestMessage(msg as MergeRequestMessage).catch((err) => {
+				process.stderr.write(`[swarm] merge_request handler error: ${err?.message || err}\n`);
 			});
 			return;
 		}
@@ -236,6 +299,78 @@ export class PythonRepl {
 				type: "llm_result",
 				id: msg.id,
 				result: `[ERROR] LLM query failed: ${errorText}`,
+			});
+		}
+	}
+
+	private async handleThreadRequestMessage(msg: ThreadRequestMessage): Promise<void> {
+		if (!this.threadHandler) {
+			this.send({
+				type: "thread_result",
+				id: msg.id,
+				result: "[ERROR] No thread handler registered. Run in swarm mode to use thread().",
+				success: false,
+				files_changed: [],
+				duration_ms: 0,
+			});
+			return;
+		}
+
+		try {
+			const result = await this.threadHandler(
+				msg.task,
+				msg.context,
+				msg.agent_backend,
+				msg.model,
+				msg.files || [],
+			);
+			this.send({
+				type: "thread_result",
+				id: msg.id,
+				result: result.result,
+				success: result.success,
+				files_changed: result.filesChanged,
+				duration_ms: result.durationMs,
+			});
+		} catch (err) {
+			const errorText = err instanceof Error ? err.message : String(err);
+			this.send({
+				type: "thread_result",
+				id: msg.id,
+				result: `[ERROR] Thread failed: ${errorText}`,
+				success: false,
+				files_changed: [],
+				duration_ms: 0,
+			});
+		}
+	}
+
+	private async handleMergeRequestMessage(msg: MergeRequestMessage): Promise<void> {
+		if (!this.mergeHandler) {
+			this.send({
+				type: "merge_result",
+				id: msg.id,
+				result: "[ERROR] No merge handler registered. Run in swarm mode to use merge_threads().",
+				success: false,
+			});
+			return;
+		}
+
+		try {
+			const result = await this.mergeHandler();
+			this.send({
+				type: "merge_result",
+				id: msg.id,
+				result: result.result,
+				success: result.success,
+			});
+		} catch (err) {
+			const errorText = err instanceof Error ? err.message : String(err);
+			this.send({
+				type: "merge_result",
+				id: msg.id,
+				result: `[ERROR] Merge failed: ${errorText}`,
+				success: false,
 			});
 		}
 	}

@@ -4,4 +4,6 @@ dist/
 .venv/
 .claude/
 trajectories/
+.swarm-worktrees/
 *.tgz
+.DS_Store
