@@ -4,11 +4,13 @@
  *
  * Entry point for the `swarm` command.
  *
- *   swarm                  → interactive terminal (RLM mode, default)
- *   swarm run              → single-shot RLM CLI run
- *   swarm viewer           → browse trajectory files
- *   swarm benchmark        → run benchmarks
- *   swarm --dir ./project  → swarm mode (coding agent orchestration)
+ *   swarm --dir ./project "task" → swarm mode (coding agent orchestration)
+ *   swarm --dir ./project        → interactive REPL (no query)
+ *   swarm mcp [--dir ./project]  → MCP server (stdio transport)
+ *   swarm run                    → single-shot RLM CLI run
+ *   swarm viewer                 → browse trajectory files
+ *   swarm benchmark              → run benchmarks
+ *   swarm                        → interactive terminal (RLM mode, default)
  */
 
 import {

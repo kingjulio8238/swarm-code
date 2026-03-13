@@ -8,11 +8,17 @@ Open-source swarm-native coding agent orchestrator. Fork of rlm-cli extended wit
 # Install deps
 npm install
 
-# Development (RLM text mode)
-npx tsx src/main.ts run --file data.txt "analyze this"
-
 # Development (Swarm mode)
 npx tsx src/main.ts --dir ./my-project "add error handling"
+
+# Development (Interactive mode)
+npx tsx src/main.ts --dir ./my-project
+
+# Development (MCP server)
+npx tsx src/main.ts mcp --dir ./my-project
+
+# Development (RLM text mode)
+npx tsx src/main.ts run --file data.txt "analyze this"
 
 # Build
 npm run build
