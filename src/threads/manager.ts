@@ -1,10 +1,12 @@
 /**
  * Thread manager — spawns and manages coding agent threads in isolated worktrees.
  *
- * Phase 2 enhancements:
+ * Features:
  *   - AsyncSemaphore for proper concurrency gating (no polling)
  *   - AbortSignal propagation for thread cancellation
- *   - Per-thread retry logic (configurable 0-3 retries)
+ *   - Per-thread retry logic with exponential backoff
+ *   - Error classification: retryable (transient) vs fatal (permanent)
+ *   - Agent/model re-routing on failure (fallback to alternative combos)
  *   - Budget tracking and enforcement
  *   - Per-thread error isolation
  */
@@ -20,11 +22,12 @@ import type {
 	ThreadState,
 } from "../core/types.js";
 import { MODEL_PRICING as PRICING } from "../core/types.js";
-import { getAgent } from "../agents/provider.js";
+import { getAgent, listAgents } from "../agents/provider.js";
 import { WorktreeManager } from "../worktree/manager.js";
 import { compressResult } from "../compression/compressor.js";
 import { ThreadCache, type ThreadCacheStats } from "./cache.js";
 import type { EpisodicMemory } from "../memory/episodic.js";
+import { AGENT_CAPABILITIES } from "../routing/model-router.js";
 
 // ── Async Semaphore ─────────────────────────────────────────────────────────
 
@@ -137,6 +140,86 @@ class BudgetTracker {
 			perThreadLimitUsd: this.perThreadLimit,
 		};
 	}
+}
+
+// ── Error Classification ────────────────────────────────────────────────────
+
+/** Patterns that indicate transient/retryable errors. */
+const RETRYABLE_PATTERNS = [
+	/timeout/i,
+	/timed?\s*out/i,
+	/ECONNRESET/i,
+	/ECONNREFUSED/i,
+	/EPIPE/i,
+	/rate limit/i,
+	/429/,
+	/503/,
+	/502/,
+	/500/,
+	/too many requests/i,
+	/temporarily unavailable/i,
+	/server error/i,
+	/overloaded/i,
+	/capacity/i,
+	/lock file/i,
+	/index\.lock/i,
+];
+
+/** Patterns that indicate permanent/fatal errors (don't retry). */
+const FATAL_PATTERNS = [
+	/not found/i,
+	/authentication/i,
+	/unauthorized/i,
+	/forbidden/i,
+	/invalid api key/i,
+	/model not found/i,
+	/permission denied/i,
+	/quota exceeded/i,
+	/billing/i,
+];
+
+/** Classify an error as retryable or fatal. Default: retryable (optimistic). */
+function isRetryableError(error: string): boolean {
+	// Check fatal patterns first (takes priority)
+	if (FATAL_PATTERNS.some(p => p.test(error))) return false;
+	// Check retryable patterns
+	if (RETRYABLE_PATTERNS.some(p => p.test(error))) return true;
+	// Default: retryable (be optimistic — the retry might work with a different agent)
+	return true;
+}
+
+/** Calculate exponential backoff delay with jitter. */
+function backoffDelay(attempt: number, baseMs: number = 1000): number {
+	// Exponential: 1s, 2s, 4s, 8s... capped at 30s
+	const exponential = Math.min(baseMs * Math.pow(2, attempt - 1), 30000);
+	// Add jitter (±25%)
+	const jitter = exponential * 0.25 * (Math.random() * 2 - 1);
+	return Math.max(100, exponential + jitter);
+}
+
+/**
+ * Pick an alternative agent/model combo for retry.
+ * Avoids the agent that just failed and prefers agents that are available.
+ */
+function pickAlternativeAgent(
+	failedAgent: string,
+	failedModel: string,
+	config: SwarmConfig,
+): { agent: string; model: string } | null {
+	const available = listAgents().filter(name => name !== failedAgent && name !== "mock");
+	if (available.length === 0) return null;
+
+	// Try agents in capability order, preferring different ones
+	for (const name of available) {
+		const cap = AGENT_CAPABILITIES[name];
+		if (!cap) continue;
+
+		// Use the default model for the fallback agent
+		return { agent: name, model: cap.defaultModel };
+	}
+
+	// If no capabilities known, just pick the first available with current model
+	return { agent: available[0], model: failedModel };
 }
 
 // ── Thread Manager ──────────────────────────────────────────────────────────
@@ -268,17 +351,27 @@ export class ThreadManager {
 			}
 		}
 
-		// Retry loop
+		// Retry loop with exponential backoff and agent re-routing
 		let lastResult: CompressedResult | undefined;
+		let currentConfig = threadConfig;
+
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 			state.attempt = attempt;
 
 			if (attempt > 1) {
+				// Exponential backoff before retry
+				const delay = backoffDelay(attempt - 1);
 				state.phase = "retrying";
-				this.onThreadProgress?.(threadId, "retrying", `attempt ${attempt}/${maxAttempts}`);
+				this.onThreadProgress?.(threadId, "retrying",
+					`attempt ${attempt}/${maxAttempts}, backoff ${(delay / 1000).toFixed(1)}s`);
+
+				await new Promise((r) => setTimeout(r, delay));
+
+				// Check abort after backoff
+				if (threadAc.signal.aborted) break;
 			}
 
-			lastResult = await this.executeThread(threadId, threadConfig, state, threadAc.signal);
+			lastResult = await this.executeThread(threadId, currentConfig, state, threadAc.signal);
 
 			if (lastResult.success || threadAc.signal.aborted) {
 				break;
@@ -286,6 +379,29 @@ export class ThreadManager {
 
 			// Don't retry on cancellation or budget issues
 			if (state.status === "cancelled") break;
+
+			// Classify the error — don't retry fatal errors
+			const errorMsg = state.error || lastResult.summary || "";
+			if (!isRetryableError(errorMsg)) {
+				this.onThreadProgress?.(threadId, "failed", `fatal error, not retrying: ${errorMsg.slice(0, 80)}`);
+				break;
+			}
+
+			// Try re-routing to a different agent/model on retry
+			if (attempt < maxAttempts) {
+				const currentAgent = currentConfig.agent.backend || this.config.default_agent;
+				const currentModel = currentConfig.agent.model || this.config.default_model;
+				const alt = pickAlternativeAgent(currentAgent, currentModel, this.config);
+
+				if (alt) {
+					currentConfig = {
+						...currentConfig,
+						agent: { backend: alt.agent, model: alt.model },
+					};
+					this.onThreadProgress?.(threadId, "retrying",
+						`re-routing: ${currentAgent} → ${alt.agent}`);
+				}
+			}
 		}
 
 		this.sessionAbort?.removeEventListener("abort", onSessionAbort);
