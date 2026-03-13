@@ -1420,37 +1420,37 @@ async function interactive(): Promise<void> {
 			{
 				name: "OpenCode",
 				id: "opencode",
-				desc: "Multi-provider + open-source models (Ollama, DeepSeek, Kimi, GLM, ...)",
-				keys: SETUP_PROVIDERS, // accepts any provider
-				needsAnyKey: true,
+				desc: "Multi-provider + open-source (Ollama, DeepSeek, Kimi, GLM, ...)",
+				keys: SETUP_PROVIDERS, // optionally accepts any provider
+				requiresKey: false, // can run with local/open-source models, no API key needed
 			},
 			{
 				name: "Claude Code",
 				id: "claude-code",
 				desc: "Anthropic",
 				keys: SETUP_PROVIDERS.filter((p) => p.piProvider === "anthropic"),
-				needsAnyKey: false,
+				requiresKey: true,
 			},
 			{
 				name: "Codex",
 				id: "codex",
 				desc: "OpenAI",
 				keys: SETUP_PROVIDERS.filter((p) => p.piProvider === "openai"),
-				needsAnyKey: false,
+				requiresKey: true,
 			},
 			{
 				name: "Aider",
 				id: "aider",
 				desc: "Git-aware AI pair programmer (Anthropic, OpenAI)",
 				keys: SETUP_PROVIDERS.filter((p) => p.piProvider === "anthropic" || p.piProvider === "openai"),
-				needsAnyKey: true,
+				requiresKey: true,
 			},
 			{
 				name: "Direct LLM",
 				id: "direct-llm",
 				desc: "Bare API calls, no coding agent",
 				keys: SETUP_PROVIDERS,
-				needsAnyKey: true,
+				requiresKey: true,
 			},
 		];
 
@@ -1480,37 +1480,50 @@ async function interactive(): Promise<void> {
 			const agent = AGENT_CHOICES[idx];
 			console.log(`\n  ${c.green}✓${c.reset} Agent: ${c.bold}${agent.name}${c.reset}\n`);
 
-			// Prompt for API key(s) based on the selected agent
-			if (agent.keys.length > 0) {
-				if (agent.needsAnyKey) {
-					console.log(`  ${c.dim}Configure at least one provider (ESC to skip):${c.reset}\n`);
-				} else {
-					console.log(`  ${c.dim}Configure API key:${c.reset}\n`);
-				}
-
-				let gotAnyKey = false;
+			// Prompt for API key(s) one by one based on the selected agent
+			let gotAnyKey = false;
+			if (agent.requiresKey) {
+				// Agent requires at least one key — prompt until we get one
+				console.log(`  ${c.dim}${agent.name} requires an API key. Configure one now:${c.reset}\n`);
 				for (const provider of agent.keys) {
 					const gotKey = await promptForProviderKey(setupRl, provider);
-					if (gotKey === null) {
-						// ESC — skip remaining keys
-						break;
-					}
+					if (gotKey === null) break; // ESC — skip remaining
 					if (gotKey) {
 						gotAnyKey = true;
-						// For multi-provider agents, one key is enough
-						if (agent.needsAnyKey) break;
+						break; // Got one — that's enough
 					}
 				}
-
-				if (!gotAnyKey && !agent.needsAnyKey) {
+				if (!gotAnyKey) {
 					console.log(`\n  ${c.dim}No key provided. Try another agent or set keys in .env${c.reset}\n`);
 					continue;
 				}
+			} else {
+				// Agent works without keys (e.g. OpenCode with open-source models)
+				// Offer to configure a provider key optionally
+				console.log(`  ${c.dim}${agent.name} works with open-source models (no API key needed).${c.reset}`);
+				console.log(`  ${c.dim}Optionally configure a provider for cloud models:${c.reset}\n`);
+				for (const provider of agent.keys) {
+					console.log(`    ${c.dim}-${c.reset} ${provider.name} ${c.dim}(${provider.env})${c.reset}`);
+				}
+				console.log();
+
+				const addKey = await questionWithEsc(setupRl, `  ${c.cyan}Add an API key? [y/N]:${c.reset} `);
+				if (addKey !== null && (addKey.toLowerCase() === "y" || addKey.toLowerCase() === "yes")) {
+					for (const provider of agent.keys) {
+						const gotKey = await promptForProviderKey(setupRl, provider);
+						if (gotKey === null) break;
+						if (gotKey) {
+							gotAnyKey = true;
+							break;
+						}
+					}
+				}
 			}
 
-			// Auto-select default model from whichever provider has a key
+			// Set default model
 			const activeProvider = Object.keys(PROVIDER_KEYS).find((p) => process.env[providerEnvKey(p)]);
 			if (activeProvider) {
+				// Has an API key — use that provider's default model
 				currentProviderName = activeProvider;
 				const defaultModel = getDefaultModelForProvider(activeProvider);
 				if (defaultModel) {
@@ -1518,6 +1531,13 @@ async function interactive(): Promise<void> {
 					saveModelPreference(currentModelId);
 					console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
 				}
+			} else {
+				// No API key — default to open-source model via OpenCode
+				currentModelId = "ollama/deepseek-coder-v2";
+				saveModelPreference(currentModelId);
+				console.log(
+					`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset} ${c.dim}(open-source, requires Ollama)${c.reset}`,
+				);
 			}
 			console.log();
 			setupDone = true;
