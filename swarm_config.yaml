@@ -61,3 +61,6 @@ episodic_memory_enabled: false
 
 # Memory storage directory
 memory_dir: ~/.swarm/memory
+
+# Retry failed threads (0 = no retry, 1 = one retry, max 3)
+thread_retries: 1

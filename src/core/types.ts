@@ -32,6 +32,17 @@ export interface AgentProvider {
 
 export type ThreadStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
+export type ThreadProgressPhase =
+	| "queued"
+	| "creating_worktree"
+	| "agent_running"
+	| "capturing_diff"
+	| "compressing"
+	| "completed"
+	| "failed"
+	| "cancelled"
+	| "retrying";
+
 export interface ThreadConfig {
 	id: string;
 	task: string;
@@ -47,12 +58,16 @@ export interface ThreadState {
 	id: string;
 	config: ThreadConfig;
 	status: ThreadStatus;
+	phase: ThreadProgressPhase;
 	worktreePath?: string;
 	branchName?: string;
 	result?: CompressedResult;
 	startedAt?: number;
 	completedAt?: number;
 	error?: string;
+	attempt: number;
+	maxAttempts: number;
+	estimatedCostUsd: number;
 }
 
 export interface CompressedResult {
@@ -61,6 +76,7 @@ export interface CompressedResult {
 	filesChanged: string[];
 	diffStats: string;
 	durationMs: number;
+	estimatedCostUsd: number;
 }
 
 // ── Worktree types ──────────────────────────────────────────────────────────
@@ -75,8 +91,34 @@ export interface MergeResult {
 	success: boolean;
 	branch: string;
 	conflicts: string[];
+	conflictDiff: string;
 	message: string;
 }
+
+// ── Budget types ────────────────────────────────────────────────────────────
+
+export interface BudgetState {
+	totalSpentUsd: number;
+	threadCosts: Map<string, number>;
+	sessionLimitUsd: number;
+	perThreadLimitUsd: number;
+}
+
+/** Rough per-1M-token pricing for cost estimation. */
+export const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+	// Anthropic
+	"claude-sonnet-4-6": { input: 3, output: 15 },
+	"claude-opus-4-6": { input: 15, output: 75 },
+	"claude-haiku-4-5": { input: 0.8, output: 4 },
+	// OpenAI
+	"gpt-4o": { input: 2.5, output: 10 },
+	"gpt-4o-mini": { input: 0.15, output: 0.6 },
+	"o3": { input: 10, output: 40 },
+	"o3-mini": { input: 1.1, output: 4.4 },
+	// Google
+	"gemini-2.5-pro": { input: 1.25, output: 10 },
+	"gemini-2.5-flash": { input: 0.15, output: 0.6 },
+};
 
 // ── Config types ────────────────────────────────────────────────────────────
 
@@ -103,6 +145,7 @@ export interface SwarmConfig {
 	auto_cleanup_worktrees: boolean;
 	episodic_memory_enabled: boolean;
 	memory_dir: string;
+	thread_retries: number;
 }
 
 // ── Protocol messages (Python <-> TS) ───────────────────────────────────────

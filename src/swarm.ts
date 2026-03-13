@@ -25,9 +25,10 @@ const { loadConfig } = await import("./config.js");
 await import("./agents/opencode.js");
 await import("./agents/direct-llm.js");
 
-import { ThreadManager } from "./threads/manager.js";
+import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
 import { mergeAllThreads } from "./worktree/merge.js";
 import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
+import type { ThreadProgressPhase } from "./core/types.js";
 import type { Api, Model } from "@mariozechner/pi-ai";
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
@@ -283,15 +284,32 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	const context = scanDirectory(args.dir);
 	console.error(`Context: ${(context.length / 1024).toFixed(1)}KB`);
 
-	// Initialize thread manager
-	const threadManager = new ThreadManager(args.dir, config, (threadId, status) => {
-		console.error(`  [thread:${threadId.slice(0, 8)}] ${status}`);
-	});
-	await threadManager.init();
-
 	// Start REPL
 	const repl = new PythonRepl();
 	const ac = new AbortController();
+
+	// Progress callback for thread events
+	const threadProgress: ThreadProgressCallback = (threadId, phase, detail) => {
+		const tag = threadId.slice(0, 8);
+		const phaseLabels: Record<ThreadProgressPhase, string> = {
+			queued: "queued",
+			creating_worktree: "creating worktree",
+			agent_running: "running agent",
+			capturing_diff: "capturing diff",
+			compressing: "compressing",
+			completed: "completed",
+			failed: "FAILED",
+			cancelled: "cancelled",
+			retrying: "retrying",
+		};
+		const label = phaseLabels[phase] || phase;
+		const suffix = detail ? ` (${detail})` : "";
+		console.error(`  [thread:${tag}] ${label}${suffix}`);
+	};
+
+	// Initialize thread manager with session abort signal
+	const threadManager = new ThreadManager(args.dir, config, threadProgress, ac.signal);
+	await threadManager.init();
 
 	const abortAndExit = () => {
 		console.error("\nAborting...");
@@ -382,7 +400,14 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 
 		const threads = threadManager.getThreads();
 		if (threads.length > 0) {
-			console.error(`Threads: ${threads.filter(t => t.status === "completed").length} completed, ${threads.filter(t => t.status === "failed").length} failed`);
+			const completed = threads.filter(t => t.status === "completed").length;
+			const failed = threads.filter(t => t.status === "failed").length;
+			const cancelled = threads.filter(t => t.status === "cancelled").length;
+			const budget = threadManager.getBudgetState();
+			let threadSummary = `Threads: ${completed} completed, ${failed} failed`;
+			if (cancelled > 0) threadSummary += `, ${cancelled} cancelled`;
+			threadSummary += ` | Est. cost: $${budget.totalSpentUsd.toFixed(4)}`;
+			console.error(threadSummary);
 		}
 
 		console.error("---");

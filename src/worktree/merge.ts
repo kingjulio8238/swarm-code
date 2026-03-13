@@ -1,7 +1,10 @@
 /**
  * Merge thread branches back into the main branch.
  *
- * Merges are performed sequentially with --no-ff to preserve thread history.
+ * Phase 2 enhancements:
+ *   - Partial merge: continues merging non-conflicting branches after a conflict
+ *   - Conflict hunks: captures the actual diff of conflicted files
+ *   - Merge ordering: accepts optional order array from orchestrator
  */
 
 import { execFile } from "node:child_process";
@@ -21,6 +24,7 @@ function git(args: string[], cwd: string): Promise<{ stdout: string; stderr: str
 
 /**
  * Merge a single thread branch into the current branch.
+ * On conflict, captures the conflicted file list and diff hunks before aborting.
  */
 export async function mergeThreadBranch(
 	repoRoot: string,
@@ -37,6 +41,7 @@ export async function mergeThreadBranch(
 			success: true,
 			branch: branchName,
 			conflicts: [],
+			conflictDiff: "",
 			message: stdout.trim() || `Merged ${branchName}`,
 		};
 	} catch (err) {
@@ -44,18 +49,31 @@ export async function mergeThreadBranch(
 
 		// Check for merge conflicts
 		if (errMsg.includes("CONFLICT") || errMsg.includes("Merge conflict")) {
-			// Get list of conflicted files
 			try {
-				const { stdout: conflicted } = await git(["diff", "--name-only", "--diff-filter=U"], repoRoot);
+				// Get list of conflicted files
+				const { stdout: conflicted } = await git(
+					["diff", "--name-only", "--diff-filter=U"],
+					repoRoot,
+				);
 				const conflicts = conflicted.trim().split("\n").filter(Boolean);
 
-				// Abort the merge
+				// Capture the conflict diff (shows <<<<<<< markers)
+				let conflictDiff = "";
+				try {
+					const { stdout: diff } = await git(["diff"], repoRoot);
+					conflictDiff = diff.slice(0, 5000); // Cap at 5KB
+				} catch {
+					// diff might fail in weird states
+				}
+
+				// Abort the merge to restore clean state
 				await git(["merge", "--abort"], repoRoot);
 
 				return {
 					success: false,
 					branch: branchName,
 					conflicts,
+					conflictDiff,
 					message: `Merge conflicts in: ${conflicts.join(", ")}`,
 				};
 			} catch {
@@ -64,6 +82,7 @@ export async function mergeThreadBranch(
 					success: false,
 					branch: branchName,
 					conflicts: [],
+					conflictDiff: "",
 					message: errMsg,
 				};
 			}
@@ -73,32 +92,65 @@ export async function mergeThreadBranch(
 			success: false,
 			branch: branchName,
 			conflicts: [],
+			conflictDiff: "",
 			message: errMsg,
 		};
 	}
 }
 
+export interface MergeAllOptions {
+	/** Explicit merge order — thread IDs in desired merge sequence. */
+	order?: string[];
+	/** If true, continue merging remaining branches after a conflict (default: true). */
+	continueOnConflict?: boolean;
+}
+
 /**
  * Merge all completed thread branches sequentially.
+ *
+ * Supports:
+ *   - Custom merge order via options.order
+ *   - Partial merge: by default continues past conflicts (skips conflicting branch)
  */
 export async function mergeAllThreads(
 	repoRoot: string,
 	threads: ThreadState[],
+	options: MergeAllOptions = {},
 ): Promise<MergeResult[]> {
+	const { order, continueOnConflict = true } = options;
 	const results: MergeResult[] = [];
 
-	const completed = threads.filter(
+	// Filter to completed+successful threads with branches
+	const eligible = threads.filter(
 		(t) => t.status === "completed" && t.branchName && t.result?.success,
 	);
 
-	for (const thread of completed) {
+	// Apply ordering if specified
+	let ordered: ThreadState[];
+	if (order && order.length > 0) {
+		const orderMap = new Map(order.map((id, idx) => [id, idx]));
+		ordered = [...eligible].sort((a, b) => {
+			const aIdx = orderMap.get(a.id) ?? Infinity;
+			const bIdx = orderMap.get(b.id) ?? Infinity;
+			return aIdx - bIdx;
+		});
+	} else {
+		// Default: merge in completion order (earliest first)
+		ordered = [...eligible].sort(
+			(a, b) => (a.completedAt || 0) - (b.completedAt || 0),
+		);
+	}
+
+	for (const thread of ordered) {
 		const result = await mergeThreadBranch(repoRoot, thread.branchName!, thread.id);
 		results.push(result);
 
-		if (!result.success) {
-			// Stop merging on first conflict
+		if (!result.success && !continueOnConflict) {
+			// Stop on first conflict (legacy behavior)
 			break;
 		}
+		// If conflict but continueOnConflict is true, we skip this branch
+		// and proceed to the next. The merge was already aborted in mergeThreadBranch.
 	}
 
 	return results;

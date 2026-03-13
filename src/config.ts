@@ -33,6 +33,7 @@ export interface SwarmConfig {
 	auto_cleanup_worktrees: boolean;
 	episodic_memory_enabled: boolean;
 	memory_dir: string;
+	thread_retries: number;
 }
 
 // Also export as RlmConfig for backwards compat with forked modules
@@ -61,6 +62,7 @@ const DEFAULTS: SwarmConfig = {
 	auto_cleanup_worktrees: true,
 	episodic_memory_enabled: false,
 	memory_dir: path.join(os.homedir(), ".swarm", "memory"),
+	thread_retries: 1,
 };
 
 function parseYaml(text: string): Record<string, unknown> {
@@ -142,6 +144,7 @@ export function loadConfig(): SwarmConfig {
 					auto_cleanup_worktrees: bool(parsed.auto_cleanup_worktrees, DEFAULTS.auto_cleanup_worktrees),
 					episodic_memory_enabled: bool(parsed.episodic_memory_enabled, DEFAULTS.episodic_memory_enabled),
 					memory_dir: str(parsed.memory_dir, DEFAULTS.memory_dir),
+					thread_retries: clamp(parsed.thread_retries, 0, 3, DEFAULTS.thread_retries),
 				};
 			} catch {
 				// Fall through to defaults

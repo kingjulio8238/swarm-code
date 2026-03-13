@@ -1,6 +1,10 @@
 /**
  * Git worktree manager — creates isolated worktrees for thread execution.
  *
+ * Phase 2 enhancements:
+ *   - Mutex on create() to prevent branch name races under concurrency
+ *   - Retry logic for git worktree add (transient lock file contention)
+ *
  * Lifecycle:
  *   1. create() — git worktree add -b swarm/<id> <path> HEAD
  *   2. Agent runs in worktree directory
@@ -26,10 +30,35 @@ function git(args: string[], cwd: string): Promise<{ stdout: string; stderr: str
 	});
 }
 
+/** Simple async mutex — only one holder at a time. */
+class Mutex {
+	private locked = false;
+	private waiters: Array<() => void> = [];
+
+	async acquire(): Promise<void> {
+		if (!this.locked) {
+			this.locked = true;
+			return;
+		}
+		await new Promise<void>((resolve) => this.waiters.push(resolve));
+		this.locked = true;
+	}
+
+	release(): void {
+		this.locked = false;
+		const next = this.waiters.shift();
+		if (next) next();
+	}
+}
+
+const WORKTREE_CREATE_RETRIES = 3;
+const WORKTREE_RETRY_DELAY_MS = 500;
+
 export class WorktreeManager {
 	private repoRoot: string;
 	private baseDir: string;
 	private worktrees: Map<string, WorktreeInfo> = new Map();
+	private createMutex = new Mutex();
 
 	constructor(repoRoot: string, baseDir: string = ".swarm-worktrees") {
 		this.repoRoot = repoRoot;
@@ -65,8 +94,21 @@ export class WorktreeManager {
 		}
 	}
 
-	/** Create a new worktree for a thread. */
+	/**
+	 * Create a new worktree for a thread.
+	 * Serialized via mutex to prevent branch name races.
+	 * Retries on transient lock-file contention.
+	 */
 	async create(threadId: string): Promise<WorktreeInfo> {
+		await this.createMutex.acquire();
+		try {
+			return await this.createWorktreeWithRetry(threadId);
+		} finally {
+			this.createMutex.release();
+		}
+	}
+
+	private async createWorktreeWithRetry(threadId: string): Promise<WorktreeInfo> {
 		const branch = `swarm/${threadId}`;
 		const wtPath = path.join(this.baseDir, `wt-${threadId}`);
 
@@ -86,12 +128,31 @@ export class WorktreeManager {
 			// Branch didn't exist — fine
 		}
 
-		// Create worktree
-		await git(["worktree", "add", "-b", branch, wtPath, "HEAD"], this.repoRoot);
+		// Create worktree with retry for lock-file contention
+		let lastErr: Error | undefined;
+		for (let attempt = 1; attempt <= WORKTREE_CREATE_RETRIES; attempt++) {
+			try {
+				await git(["worktree", "add", "-b", branch, wtPath, "HEAD"], this.repoRoot);
+				const info: WorktreeInfo = { id: threadId, path: wtPath, branch };
+				this.worktrees.set(threadId, info);
+				return info;
+			} catch (err) {
+				lastErr = err instanceof Error ? err : new Error(String(err));
+				const isLockError = lastErr.message.includes(".lock") ||
+					lastErr.message.includes("Unable to create") ||
+					lastErr.message.includes("index.lock");
 
-		const info: WorktreeInfo = { id: threadId, path: wtPath, branch };
-		this.worktrees.set(threadId, info);
-		return info;
+				if (isLockError && attempt < WORKTREE_CREATE_RETRIES) {
+					// Wait with jitter before retrying
+					const delay = WORKTREE_RETRY_DELAY_MS * attempt + Math.random() * 200;
+					await new Promise((r) => setTimeout(r, delay));
+					continue;
+				}
+				throw lastErr;
+			}
+		}
+
+		throw lastErr || new Error("Failed to create worktree");
 	}
 
 	/** Get the git diff of uncommitted changes in a worktree. */
@@ -106,10 +167,8 @@ export class WorktreeManager {
 			// Might be empty
 		}
 
-		const { stdout } = await git(["diff", "--cached", "--stat"], info.path);
 		const { stdout: fullDiff } = await git(["diff", "--cached"], info.path);
-
-		return fullDiff || stdout || "(no changes)";
+		return fullDiff || "(no changes)";
 	}
 
 	/** Get diff stats (short summary). */
