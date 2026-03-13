@@ -14,7 +14,9 @@ function git(args: string[], cwd: string): Promise<{ stdout: string; stderr: str
 	return new Promise((resolve, reject) => {
 		execFile("git", args, { cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
 			if (err) {
-				reject(new Error(`git ${args[0]} failed: ${stderr || err.message}`));
+				// Include stdout in error message — git merge writes CONFLICT info to stdout
+				const detail = [stderr, stdout].filter((s) => s?.trim()).join("\n") || err.message;
+				reject(new Error(`git ${args[0]} failed: ${detail}`));
 			} else {
 				resolve({ stdout, stderr });
 			}

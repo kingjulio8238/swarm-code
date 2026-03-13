@@ -35,7 +35,7 @@ import { AGENT_CAPABILITIES } from "../routing/model-router.js";
  * Promise-based semaphore for concurrency control.
  * acquire() resolves when a slot is available, release() frees a slot.
  */
-class AsyncSemaphore {
+export class AsyncSemaphore {
 	private current: number = 0;
 	private readonly max: number;
 	private waiters: Array<() => void> = [];
