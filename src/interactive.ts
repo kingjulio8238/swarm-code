@@ -530,36 +530,36 @@ function checkboxSelect(items: CheckboxItem[]): Promise<number[]> {
 		};
 
 		let rendered = false;
+		process.stdout.write("\x1b[?25l"); // Hide cursor
 		render();
 		rendered = true;
 
 		const wasRaw = stdin.isRaw;
 		if (stdin.isTTY) stdin.setRawMode(true);
 
+		const cleanup = () => {
+			stdin.removeListener("data", onData);
+			if (stdin.isTTY) stdin.setRawMode(wasRaw ?? false);
+			process.stdout.write("\x1b[?25h"); // Show cursor
+		};
+
 		const onData = (data: Buffer) => {
 			const key = data.toString();
 			if (key === "\x1b[A" || key === "k") {
-				// Up
 				cursor = (cursor - 1 + items.length) % items.length;
 				render();
 			} else if (key === "\x1b[B" || key === "j") {
-				// Down
 				cursor = (cursor + 1) % items.length;
 				render();
 			} else if (key === " ") {
-				// Toggle
 				items[cursor].checked = !items[cursor].checked;
 				render();
 			} else if (key === "\r" || key === "\n") {
-				// Confirm
-				stdin.removeListener("data", onData);
-				if (stdin.isTTY) stdin.setRawMode(wasRaw ?? false);
+				cleanup();
 				const selected = items.map((item, i) => (item.checked ? i : -1)).filter((i) => i >= 0);
 				resolve(selected);
 			} else if (key === "\x1b" || key === "\x03") {
-				// Escape or Ctrl+C
-				stdin.removeListener("data", onData);
-				if (stdin.isTTY) stdin.setRawMode(wasRaw ?? false);
+				cleanup();
 				resolve([]);
 			}
 		};
