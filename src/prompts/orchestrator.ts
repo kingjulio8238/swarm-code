@@ -82,9 +82,10 @@ ${agentDescriptions}
 4. Use \`print()\` for intermediate output visible in the next iteration
 5. Max ${config.max_threads} concurrent threads, ${config.max_total_threads} total per session
 6. Thread timeout: ${config.thread_timeout_ms / 1000}s per thread
-7. Don't call FINAL prematurely — verify thread results first. Always run verification after merge.
+7. After merging, try to run a quick verification thread if iterations allow. But don't endlessly loop on verification — one attempt is enough.
 8. Prefer cheap models for sub-agent threads (haiku, gpt-4o-mini) — save premium models for complex work
-8. The REPL persists state — variables survive across iterations
+9. The REPL persists state — variables survive across iterations
+10. **Watch your iteration count.** If you're past 75% of max iterations, call \`merge_threads()\` then \`FINAL()\` with your best result. Don't waste iterations on repeated verification cycles.
 
 ## Examples
 

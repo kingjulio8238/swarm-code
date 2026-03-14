@@ -494,6 +494,14 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 		});
 
 		if (execResult.hasFinal && execResult.finalValue !== null) {
+			// Auto-merge any unmerged thread branches before returning
+			if (mergeHandler) {
+				try {
+					await mergeHandler();
+				} catch {
+					// Non-fatal — merge may have already been done by the LLM
+				}
+			}
 			return {
 				answer: execResult.finalValue,
 				iterations: iteration,
@@ -516,13 +524,38 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 		parts.push(
 			`\nIteration ${iteration}/${config.max_iterations}. Sub-queries used: ${totalSubQueries}/${config.max_sub_queries}.`,
 		);
-		parts.push("Continue processing or call FINAL() when you have the answer.");
+
+		const remaining = config.max_iterations - iteration;
+		if (remaining <= 2) {
+			parts.push(
+				"⚠️ CRITICAL: Only " +
+					remaining +
+					" iteration(s) remaining! Call merge_threads() then FINAL() NOW with your best result. Any unmerged work will be lost.",
+			);
+		} else if (remaining <= Math.ceil(config.max_iterations * 0.25)) {
+			parts.push(
+				"⚠️ WARNING: " +
+					remaining +
+					" iterations remaining. Wrap up: merge_threads() → FINAL(). Don't start new threads.",
+			);
+		} else {
+			parts.push("Continue processing or call FINAL() when you have the answer.");
+		}
 
 		conversationHistory.push({
 			role: "user",
 			content: parts.join("\n\n"),
 			timestamp: Date.now(),
 		});
+	}
+
+	// Auto-merge any remaining thread branches even though FINAL was never called
+	if (mergeHandler) {
+		try {
+			await mergeHandler();
+		} catch {
+			// Non-fatal
+		}
 	}
 
 	return {
