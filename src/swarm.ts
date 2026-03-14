@@ -16,7 +16,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // Dynamic imports — ensures env.js has set process.env BEFORE pi-ai loads
-const { getModels, getProviders } = await import("@mariozechner/pi-ai");
+await import("@mariozechner/pi-ai");
 const { PythonRepl } = await import("./core/repl.js");
 const { runRlmLoop } = await import("./core/rlm.js");
 const { loadConfig } = await import("./config.js");
@@ -29,10 +29,11 @@ await import("./agents/codex.js");
 await import("./agents/aider.js");
 
 import { randomBytes } from "node:crypto";
-import type { Api, Model } from "@mariozechner/pi-ai";
+// Api/Model types used via resolveModel from model-resolver
 import { loadHooks, runHooks } from "./hooks/runner.js";
 import { EpisodicMemory } from "./memory/episodic.js";
 import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
+import { resolveModel } from "./routing/model-resolver.js";
 import { classifyTaskComplexity, describeAvailableAgents, FailureTracker, routeTask } from "./routing/model-router.js";
 import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
 import { renderBanner } from "./ui/banner.js";
@@ -249,77 +250,6 @@ function scanDirectory(dir: string, maxFiles: number = 200, maxTotalSize: number
 	return parts.join("\n");
 }
 
-// ── Model resolution ────────────────────────────────────────────────────────
-
-function resolveModel(modelId: string): { model: Model<Api>; provider: string } | null {
-	const providerKeys: Record<string, string> = {
-		anthropic: "ANTHROPIC_API_KEY",
-		openai: "OPENAI_API_KEY",
-		google: "GEMINI_API_KEY",
-	};
-	const defaultModels: Record<string, string> = {
-		anthropic: "claude-sonnet-4-6",
-		openai: "gpt-4o",
-		google: "gemini-2.5-flash",
-	};
-
-	const knownProviders = new Set(Object.keys(providerKeys));
-	let model: Model<Api> | undefined;
-	let resolvedProvider = "";
-
-	for (const provider of getProviders()) {
-		if (!knownProviders.has(provider)) continue;
-		const key = providerKeys[provider]!;
-		if (!process.env[key]) continue;
-		for (const m of getModels(provider)) {
-			if (m.id === modelId) {
-				model = m;
-				resolvedProvider = provider;
-				break;
-			}
-		}
-		if (model) break;
-	}
-
-	if (!model) {
-		for (const provider of getProviders()) {
-			if (knownProviders.has(provider)) continue;
-			for (const m of getModels(provider)) {
-				if (m.id === modelId) {
-					model = m;
-					resolvedProvider = provider;
-					break;
-				}
-			}
-			if (model) break;
-		}
-	}
-
-	if (!model) {
-		for (const [prov, envKey] of Object.entries(providerKeys)) {
-			if (!process.env[envKey]) continue;
-			const fallbackId = defaultModels[prov];
-			if (!fallbackId) continue;
-			for (const p of getProviders()) {
-				if (p !== prov) continue;
-				for (const m of getModels(p)) {
-					if (m.id === fallbackId) {
-						model = m;
-						resolvedProvider = prov;
-						logWarn(`Using ${fallbackId} (${prov}) — model "${modelId}" not found`);
-						break;
-					}
-				}
-				if (model) break;
-			}
-			if (model) break;
-		}
-	}
-
-	if (!model) return null;
-	return { model, provider: resolvedProvider };
-}
-
 // ── Main ────────────────────────────────────────────────────────────────────
 
 export async function runSwarmMode(rawArgs: string[]): Promise<void> {
@@ -346,12 +276,20 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	if (args.maxBudget !== null) config.max_session_budget_usd = args.maxBudget;
 	if (args.autoRoute) config.auto_model_selection = true;
 
-	// Resolve orchestrator model
-	const resolved = resolveModel(args.orchestratorModel);
+	// Resolve orchestrator model — prefer CLI arg, then config's default_model
+	const orchestratorModelId =
+		args.orchestratorModel !== "claude-sonnet-4-6"
+			? args.orchestratorModel
+			: config.default_model || args.orchestratorModel;
+	const modelLookupId =
+		orchestratorModelId.startsWith("ollama/") || orchestratorModelId.startsWith("openrouter/")
+			? orchestratorModelId
+			: orchestratorModelId.replace(/^(anthropic|openai|google)\//, "");
+	const resolved = resolveModel(modelLookupId, logWarn);
 	if (!resolved) {
 		logError(
-			`Could not find model "${args.orchestratorModel}"`,
-			"Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY in your .env file",
+			`Could not find model "${orchestratorModelId}"`,
+			"Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY in your .env file, or use Ollama/OpenRouter",
 		);
 		process.exit(1);
 	}
