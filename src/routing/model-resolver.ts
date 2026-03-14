@@ -27,14 +27,24 @@ const DEFAULT_MODELS: Record<string, string> = {
 
 /**
  * Create a synthetic pi-ai Model for Ollama (OpenAI-compatible API at localhost:11434).
+ *
+ * Uses provider "openai" so pi-ai's API key lookup resolves to OPENAI_API_KEY.
+ * We set a dummy OPENAI_API_KEY if none exists — Ollama ignores auth headers.
  */
 function createOllamaModel(modelId: string): Model<"openai-completions"> {
 	const shortId = modelId.replace("ollama/", "");
+
+	// pi-ai requires an API key for the "openai" provider. Ollama doesn't need one,
+	// but we must satisfy pi-ai's check. Set a dummy key if no real one exists.
+	if (!process.env.OPENAI_API_KEY) {
+		process.env.OPENAI_API_KEY = "ollama-local";
+	}
+
 	return {
 		id: shortId,
 		name: shortId,
 		api: "openai-completions",
-		provider: "ollama",
+		provider: "openai",
 		baseUrl: "http://localhost:11434/v1",
 		reasoning: false,
 		input: ["text"],
