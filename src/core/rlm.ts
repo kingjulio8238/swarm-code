@@ -260,6 +260,7 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 
 	let totalSubQueries = 0;
 	let iterationSubQueries = 0;
+	let mergedAlready = false;
 
 	const llmQueryHandler = async (subContext: string, instruction: string) => {
 		if (signal?.aborted) throw new Error("Aborted");
@@ -316,7 +317,10 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 			repl.setThreadHandler(threadHandler);
 		}
 		if (mergeHandler) {
-			repl.setMergeHandler(mergeHandler);
+			repl.setMergeHandler(async () => {
+				mergedAlready = true;
+				return mergeHandler();
+			});
 		}
 	}
 
@@ -495,7 +499,7 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 
 		if (execResult.hasFinal && execResult.finalValue !== null) {
 			// Auto-merge any unmerged thread branches before returning
-			if (mergeHandler) {
+			if (mergeHandler && !mergedAlready) {
 				try {
 					await mergeHandler();
 				} catch {
@@ -550,7 +554,7 @@ export async function runRlmLoop(options: RlmOptions): Promise<RlmResult> {
 	}
 
 	// Auto-merge any remaining thread branches even though FINAL was never called
-	if (mergeHandler) {
+	if (mergeHandler && !mergedAlready) {
 		try {
 			await mergeHandler();
 		} catch {

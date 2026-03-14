@@ -864,8 +864,12 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 		process.exit(1);
 	}
 
-	// First-run onboarding
+	// First-run onboarding (may create ~/.swarm/config.yaml with user's chosen model)
 	await runOnboarding();
+
+	// Reload config to pick up any changes from onboarding
+	// (onboarding writes ~/.swarm/config.yaml but loadConfig() already ran before it)
+	Object.assign(config, loadConfig());
 
 	// Override config with CLI args
 	if (args.agent) config.default_agent = args.agent;
@@ -1098,6 +1102,22 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 			logWarn(`Merged ${merged} branches, ${failed} failed`);
 		} else if (merged > 0) {
 			logSuccess(`Merged ${merged} branches`);
+		}
+
+		// Clean up merged worktrees
+		if (config.auto_cleanup_worktrees) {
+			for (const r of results) {
+				if (r.success) {
+					const thread = threads.find((t) => t.branchName === r.branch);
+					if (thread) {
+						try {
+							await threadManager.destroyWorktree(thread.id);
+						} catch {
+							// Non-fatal
+						}
+					}
+				}
+			}
 		}
 
 		const summary = results

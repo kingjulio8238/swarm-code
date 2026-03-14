@@ -582,7 +582,7 @@ export class ThreadManager {
 				state.status = "cancelled";
 				state.phase = "cancelled";
 				state.completedAt = Date.now();
-				await this.cleanupWorktree(threadId);
+				await this.destroyWorktree(threadId);
 				return this.failResult(state, "Thread cancelled during execution");
 			}
 
@@ -687,7 +687,7 @@ export class ThreadManager {
 			state.estimatedCostUsd = cost;
 
 			// Cleanup worktree on failure
-			await this.cleanupWorktree(threadId);
+			await this.destroyWorktree(threadId);
 
 			return this.failResult(state, errorMsg);
 		} finally {
@@ -763,7 +763,8 @@ export class ThreadManager {
 		}
 	}
 
-	private async cleanupWorktree(threadId: string): Promise<void> {
+	/** Destroy a specific thread's worktree and branch. */
+	async destroyWorktree(threadId: string): Promise<void> {
 		try {
 			await this.worktreeManager.destroy(threadId, true);
 		} catch {
