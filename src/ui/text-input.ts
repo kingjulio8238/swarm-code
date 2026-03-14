@@ -13,7 +13,7 @@
  *   - Paste (multi-char with newlines): captured as multi-line
  */
 
-import { coral, dim, isTTY, stripAnsi, termWidth } from "./theme.js";
+import { coral, dim, isTTY, termWidth } from "./theme.js";
 
 // ── ANSI helpers ─────────────────────────────────────────────────────────────
 
@@ -56,62 +56,103 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 		process.stdin.resume();
 		process.stdin.setEncoding("utf-8");
 
-		// How many rows below the top border the cursor sits after drawBox()
+		// Tracks cursor position relative to top border after each drawBox()
 		let cursorRowFromTop = 0;
-		let hasDrawn = false;
+		let prevTotalRows = 0;
 
-		function drawBox() {
-			const out = process.stderr;
-			const promptVisibleLen = 2; // "❯ "
+		function buildRows(): string[] {
+			const promptVisibleLen = 2;
+			const rows: string[] = [];
 
-			if (hasDrawn) {
-				// Move cursor from its current position back to the top border row
-				if (cursorRowFromTop > 0) {
-					out.write(`\x1b[${cursorRowFromTop}A`);
-				}
-				out.write("\x1b[0G"); // go to column 0
-				out.write("\x1b[J"); // erase from cursor to end of screen
-			}
-			hasDrawn = true;
+			// Top border
+			rows.push(`${BORDER_COLOR}${"─".repeat(w)}${RESET}`);
 
-			// Top border — thin dim line
-			const topLine = `${BORDER_COLOR}${"─".repeat(w)}${RESET}`;
-			out.write(`${topLine}\n`);
-
-			// Content rows — dark background, full width
+			// Content rows
 			const promptChar = `${ACCENT_COLOR}❯${RESET} `;
-
 			for (let i = 0; i < linesBuf.length; i++) {
 				const lineText = linesBuf[i];
 				const prefix = i === 0 ? promptChar : `${dim("·")} `;
-
-				// How much space for text content
 				const contentWidth = w - promptVisibleLen;
-				// Truncate display if line is too long
 				const displayText = lineText.length > contentWidth ? lineText.slice(0, contentWidth - 1) + "…" : lineText;
 				const padding = Math.max(0, contentWidth - displayText.length);
-
-				out.write(`${BG_DARK}${prefix}${displayText}${" ".repeat(padding)}${RESET}\n`);
+				rows.push(`${BG_DARK}${prefix}${displayText}${" ".repeat(padding)}${RESET}`);
 			}
 
-			// Bottom border — accent colored
-			const bottomLine = `${ACCENT_COLOR}${"─".repeat(w)}${RESET}`;
-			out.write(`${bottomLine}\n`);
+			// Bottom border
+			rows.push(`${ACCENT_COLOR}${"─".repeat(w)}${RESET}`);
 
-			// Hints
-			out.write(`${dim("  enter submit  esc exit")}\n`);
+			// Hints — pad to full width so it fully overwrites old content
+			const hintsText = "  enter submit  esc exit";
+			const hintsPad = Math.max(0, w - hintsText.length);
+			rows.push(`${dim(hintsText)}${" ".repeat(hintsPad)}`);
 
-			// Position cursor inside the text area
-			// We're at the bottom (after hints). Move up to the correct content row.
-			const currentLineIdx = linesBuf.length - 1; // cursor is always on last line
-			const rowsFromBottom = 2 + (linesBuf.length - 1 - currentLineIdx); // hints + bottom border + lines below cursor
-			out.write(`\x1b[${rowsFromBottom}A`);
-			// Move to correct column: prefix width + cursor position
+			return rows;
+		}
+
+		function drawBox() {
+			const out = process.stderr;
+			const promptVisibleLen = 2;
+			const rows = buildRows();
+			const totalRows = rows.length;
+
+			if (prevTotalRows > 0) {
+				// ── Redraw: overwrite rows in place (no \n, no scrolling) ──
+				// Move cursor to top border row
+				if (cursorRowFromTop > 0) {
+					out.write(`\x1b[${cursorRowFromTop}A`);
+				}
+				out.write("\r");
+
+				// Overwrite each row in place
+				const commonRows = Math.min(totalRows, prevTotalRows);
+				for (let i = 0; i < commonRows; i++) {
+					out.write(`\x1b[2K${rows[i]}`);
+					if (i < commonRows - 1) {
+						out.write("\x1b[1B\r"); // cursor down 1 (no scroll), start of line
+					}
+				}
+
+				if (totalRows > prevTotalRows) {
+					// More rows than before (multi-line paste) — append with \n
+					for (let i = commonRows; i < totalRows; i++) {
+						out.write(`\n\x1b[2K${rows[i]}`);
+					}
+				} else if (prevTotalRows > totalRows) {
+					// Fewer rows than before — erase leftover old rows
+					for (let i = totalRows; i < prevTotalRows; i++) {
+						out.write("\x1b[1B\r\x1b[2K");
+					}
+					// Move back to last new row
+					const extra = prevTotalRows - totalRows;
+					if (extra > 0) out.write(`\x1b[${extra}A`);
+				}
+
+				// Cursor is now on the last row (hints).
+			} else {
+				// ── Initial draw: use \n between rows, no trailing \n ──
+				for (let i = 0; i < totalRows; i++) {
+					if (i > 0) out.write("\n");
+					out.write(rows[i]);
+				}
+				// Cursor is on the hints line (last row).
+			}
+
+			prevTotalRows = totalRows;
+
+			// Position cursor at the active content row
+			// Cursor is currently on the hints line (last row = index totalRows-1).
+			// Content cursor is on row (1 + currentLineIdx).
+			const currentLineIdx = linesBuf.length - 1;
+			const targetRow = 1 + currentLineIdx;
+			const hintsRow = totalRows - 1;
+			const rowsUp = hintsRow - targetRow;
+			if (rowsUp > 0) out.write(`\x1b[${rowsUp}A`);
+
+			// Set column
 			const col = promptVisibleLen + cursorPos + 1;
 			out.write(`\x1b[${col}G`);
 
-			// Track where cursor ended up (row 0 = top border)
-			cursorRowFromTop = 1 + currentLineIdx;
+			cursorRowFromTop = targetRow;
 		}
 
 		// Initial draw
@@ -240,12 +281,11 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 				process.stdin.setRawMode(origRawMode);
 			}
 
-			// Move cursor to top of box and clear everything
+			// Move cursor to top of box
 			if (cursorRowFromTop > 0) {
 				process.stderr.write(`\x1b[${cursorRowFromTop}A`);
 			}
-			process.stderr.write("\x1b[0G");
-			process.stderr.write("\x1b[J"); // erase to end of screen
+			process.stderr.write("\r\x1b[J"); // erase from here to end of screen
 
 			// Write the submitted text as a clean line (so it's visible in scrollback)
 			const fullText = linesBuf.join("\n").trim();
