@@ -320,6 +320,7 @@ async function readHiddenInput(prompt: string): Promise<string> {
 		let input = "";
 		const origRawMode = process.stdin.isRaw;
 		if (process.stdin.isTTY) process.stdin.setRawMode(true);
+		process.stdin.resume();
 
 		process.stderr.write(prompt);
 
