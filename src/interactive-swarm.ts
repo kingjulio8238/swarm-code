@@ -94,8 +94,7 @@ function parseInteractiveArgs(args: string[]): InteractiveSwarmArgs {
 	}
 
 	if (!dir) {
-		logError("--dir <path> is required for interactive swarm mode");
-		process.exit(1);
+		dir = process.cwd();
 	}
 
 	return {

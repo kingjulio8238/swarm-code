@@ -10,7 +10,7 @@
  *   swarm run                    → single-shot RLM CLI run
  *   swarm viewer                 → browse trajectory files
  *   swarm benchmark              → run benchmarks
- *   swarm                        → interactive terminal (RLM mode, default)
+ *   swarm                        → interactive REPL (uses current directory)
  */
 
 import { bold, coral, cyan, dim, isTTY, symbols, termWidth, yellow } from "./ui/theme.js";
@@ -54,8 +54,11 @@ export function buildHelp(): string {
 	lines.push(`    ${yellow("swarm mcp")} --dir ./project       ${dim("Start with default directory")}`);
 
 	lines.push("");
+	lines.push(`  ${bold("INTERACTIVE")} ${dim("(default — uses current directory)")}`);
+	lines.push(`    ${yellow("swarm")}                          ${dim("Interactive REPL in current dir")}`);
+
+	lines.push("");
 	lines.push(`  ${bold("RLM MODE")} ${dim("(text processing, inherited from rlm-cli)")}`);
-	lines.push(`    ${yellow("swarm")}                          ${dim("Interactive terminal (default)")}`);
 	lines.push(`    ${yellow("swarm run")} [options] "<query>"  ${dim("Run a single query")}`);
 	lines.push(`    ${yellow("swarm viewer")}                    ${dim("Browse saved trajectory files")}`);
 	lines.push(`    ${yellow("swarm benchmark")} <name> [--idx]  ${dim("Run benchmark")}`);
@@ -142,15 +145,16 @@ async function main() {
 		return;
 	}
 
-	const command = args[0] || "interactive";
+	const command = args[0] || "";
+
+	// Default: no command → interactive swarm mode using current directory
+	if (!command || command === "interactive" || command === "i") {
+		const { runInteractiveSwarm } = await import("./interactive-swarm.js");
+		await runInteractiveSwarm(["--dir", process.cwd(), ...args.slice(command ? 1 : 0)]);
+		return;
+	}
 
 	switch (command) {
-		case "interactive":
-		case "i": {
-			await import("./interactive.js");
-			break;
-		}
-
 		case "viewer":
 		case "view": {
 			process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
