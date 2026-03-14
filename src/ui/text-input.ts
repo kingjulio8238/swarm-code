@@ -1,32 +1,35 @@
 /**
- * Text input for the interactive REPL with multi-line paste support.
+ * Bordered text input for the interactive REPL.
  *
- * Uses raw stdin to detect paste vs keypress:
- *   - Pasted text arrives as a single data chunk containing newlines → preserved as multi-line
- *   - Typed Enter alone → submits the input
- *   - Escape → signals exit
- *   - Ctrl+D → submits current input
- *   - Ctrl+C → signals exit
- *   - Standard editing: backspace, left/right arrows, home/end
+ * Visual style inspired by OpenCode — full-width bordered text area with
+ * a darker background row, accent-colored bottom border, and multi-line
+ * paste support.
+ *
+ * Keys:
+ *   - Enter: submit
+ *   - Escape / Ctrl+C: exit
+ *   - Ctrl+D: submit
+ *   - Backspace, left/right, home/end: editing
+ *   - Paste (multi-char with newlines): captured as multi-line
  */
 
-import { coral, dim, isTTY, stripAnsi } from "./theme.js";
+import { coral, dim, isTTY, stripAnsi, termWidth } from "./theme.js";
+
+// ── ANSI helpers ─────────────────────────────────────────────────────────────
+
+const BG_DARK = "\x1b[48;2;30;33;39m"; // dark background for input row
+const RESET = "\x1b[0m";
+const HIDE_CURSOR = "\x1b[?25l";
+const SHOW_CURSOR = "\x1b[?25h";
+const BORDER_COLOR = "\x1b[38;2;60;63;68m"; // subtle gray for top border
+const ACCENT_COLOR = "\x1b[38;2;215;119;87m"; // coral for bottom border
 
 export interface TextInputResult {
 	text: string;
 	action: "submit" | "escape";
 }
 
-/**
- * Read user input with multi-line paste support and escape-to-exit.
- *
- * Behavior:
- *   - Single Enter: submits current line(s)
- *   - Pasted text with newlines: captured as multi-line, then Enter submits all
- *   - Escape: returns action "escape" to signal exit
- *   - Ctrl+D: submits whatever is in the buffer
- */
-export function readTextInput(prompt: string): Promise<TextInputResult> {
+export function readTextInput(_prompt: string): Promise<TextInputResult> {
 	if (!isTTY) {
 		return new Promise((resolve) => {
 			let data = "";
@@ -45,68 +48,97 @@ export function readTextInput(prompt: string): Promise<TextInputResult> {
 
 	return new Promise((resolve) => {
 		const linesBuf: string[] = [""];
-		let cursorPos = 0; // position within current (last) line
+		let cursorPos = 0;
 		const origRawMode = process.stdin.isRaw;
+		const w = termWidth();
 
 		process.stdin.setRawMode(true);
 		process.stdin.resume();
 		process.stdin.setEncoding("utf-8");
 
-		const promptVisible = stripAnsi(prompt);
+		// Track how many terminal rows we've drawn so we can clear them
+		let drawnRows = 0;
 
-		function redrawCurrentLine() {
-			const currentLine = linesBuf[linesBuf.length - 1];
-			process.stderr.write("\x1b[2K\x1b[0G"); // clear line
-			if (linesBuf.length === 1) {
-				// First line — show prompt
-				process.stderr.write(`  ${prompt}${currentLine}`);
-				const col = 3 + promptVisible.length + cursorPos;
-				process.stderr.write(`\x1b[${col}G`);
-			} else {
-				// Continuation line — indent to match
-				const pad = " ".repeat(promptVisible.length);
-				process.stderr.write(`  ${dim(".")} ${pad.slice(2)}${currentLine}`);
-				const col = 3 + promptVisible.length + cursorPos;
-				process.stderr.write(`\x1b[${col}G`);
+		function drawBox() {
+			const out = process.stderr;
+
+			// Clear previously drawn rows
+			if (drawnRows > 0) {
+				for (let i = 0; i < drawnRows; i++) {
+					out.write("\x1b[1A\x1b[2K");
+				}
 			}
+
+			// Top border — thin dim line
+			const topLine = `${BORDER_COLOR}${"─".repeat(w)}${RESET}`;
+			out.write(`${topLine}\n`);
+
+			// Content rows — dark background, full width
+			const promptChar = `${ACCENT_COLOR}❯${RESET} `;
+			const promptVisibleLen = 2; // "❯ "
+
+			for (let i = 0; i < linesBuf.length; i++) {
+				const lineText = linesBuf[i];
+				const prefix = i === 0 ? promptChar : `${dim("·")} `;
+				const prefixVisibleLen = promptVisibleLen;
+
+				// How much space for text content
+				const contentWidth = w - prefixVisibleLen;
+				// Truncate display if line is too long
+				const displayText = lineText.length > contentWidth ? lineText.slice(0, contentWidth - 1) + "…" : lineText;
+				const padding = Math.max(0, contentWidth - displayText.length);
+
+				out.write(`${BG_DARK}${prefix}${displayText}${" ".repeat(padding)}${RESET}\n`);
+			}
+
+			// Bottom border — accent colored
+			const bottomLine = `${ACCENT_COLOR}${"─".repeat(w)}${RESET}`;
+			out.write(`${bottomLine}\n`);
+
+			// Hints
+			out.write(`${dim("  enter submit  esc exit")}\n`);
+
+			drawnRows = linesBuf.length + 3; // top border + content lines + bottom border + hints
+
+			// Position cursor inside the text area
+			// We're at the bottom (after hints). Move up to the correct content row.
+			const currentLineIdx = linesBuf.length - 1; // cursor is always on last line
+			const rowsFromBottom = 2 + (linesBuf.length - 1 - currentLineIdx); // hints + bottom border + lines below cursor
+			out.write(`\x1b[${rowsFromBottom}A`);
+			// Move to correct column: prefix width + cursor position
+			const col = promptVisibleLen + cursorPos + 1;
+			out.write(`\x1b[${col}G`);
 		}
 
-		// Show initial prompt
-		process.stderr.write(`  ${prompt}`);
+		// Initial draw
+		process.stderr.write(HIDE_CURSOR);
+		drawBox();
+		process.stderr.write(SHOW_CURSOR);
 
 		const onData = (data: string) => {
-			// Check if this looks like a paste (multiple chars with newlines)
 			const hasNewlines = data.includes("\n") || data.includes("\r");
 			const isMultiChar = data.length > 1;
 			const isPaste = hasNewlines && isMultiChar;
 
 			if (isPaste) {
-				// Paste mode — split on newlines, add all to buffer
 				const pastedLines = data.split(/\r\n|\r|\n/);
-				// Append first fragment to current line at cursor
 				const currentLine = linesBuf[linesBuf.length - 1];
 				linesBuf[linesBuf.length - 1] = currentLine.slice(0, cursorPos) + pastedLines[0] + currentLine.slice(cursorPos);
-
-				// Redraw current line with pasted content
 				cursorPos = (currentLine.slice(0, cursorPos) + pastedLines[0]).length;
-				redrawCurrentLine();
 
-				// Add remaining lines
 				for (let i = 1; i < pastedLines.length; i++) {
 					const line = pastedLines[i];
-					if (i === pastedLines.length - 1 && line === "") {
-						// Trailing newline — don't add empty line
-						break;
-					}
-					process.stderr.write("\n");
+					if (i === pastedLines.length - 1 && line === "") break;
 					linesBuf.push(line);
 					cursorPos = line.length;
-					redrawCurrentLine();
 				}
+
+				// Move cursor back to top of box before redraw
+				moveCursorToBoxTop();
+				drawBox();
 				return;
 			}
 
-			// Character-by-character processing
 			for (let i = 0; i < data.length; i++) {
 				const ch = data[i];
 
@@ -114,44 +146,39 @@ export function readTextInput(prompt: string): Promise<TextInputResult> {
 				if (ch === "\x1b") {
 					if (data[i + 1] === "[") {
 						const code = data[i + 2];
-						if (code === "C") {
-							// Right arrow
-							if (cursorPos < linesBuf[linesBuf.length - 1].length) {
-								cursorPos++;
-								redrawCurrentLine();
-							}
+						if (code === "C" && cursorPos < linesBuf[linesBuf.length - 1].length) {
+							cursorPos++;
 							i += 2;
+							moveCursorToBoxTop();
+							drawBox();
 							continue;
 						}
-						if (code === "D") {
-							// Left arrow
-							if (cursorPos > 0) {
-								cursorPos--;
-								redrawCurrentLine();
-							}
+						if (code === "D" && cursorPos > 0) {
+							cursorPos--;
 							i += 2;
+							moveCursorToBoxTop();
+							drawBox();
 							continue;
 						}
 						if (code === "H") {
-							// Home
 							cursorPos = 0;
-							redrawCurrentLine();
 							i += 2;
+							moveCursorToBoxTop();
+							drawBox();
 							continue;
 						}
 						if (code === "F") {
-							// End
 							cursorPos = linesBuf[linesBuf.length - 1].length;
-							redrawCurrentLine();
 							i += 2;
+							moveCursorToBoxTop();
+							drawBox();
 							continue;
 						}
-						// Skip other escape sequences
 						i += 2;
 						continue;
 					}
-					// Bare Escape key — exit
-					finish();
+					// Bare Escape — exit
+					finishAndClear();
 					resolve({ text: "", action: "escape" });
 					return;
 				}
@@ -159,14 +186,14 @@ export function readTextInput(prompt: string): Promise<TextInputResult> {
 				// Ctrl+D — submit
 				if (ch === "\x04") {
 					const text = linesBuf.join("\n").trim();
-					finish();
+					finishAndClear();
 					resolve({ text, action: "submit" });
 					return;
 				}
 
 				// Ctrl+C — exit
 				if (ch === "\x03") {
-					finish();
+					finishAndClear();
 					resolve({ text: "", action: "escape" });
 					return;
 				}
@@ -174,7 +201,7 @@ export function readTextInput(prompt: string): Promise<TextInputResult> {
 				// Enter — submit
 				if (ch === "\r" || ch === "\n") {
 					const text = linesBuf.join("\n").trim();
-					finish();
+					finishAndClear();
 					resolve({ text, action: "submit" });
 					return;
 				}
@@ -185,7 +212,8 @@ export function readTextInput(prompt: string): Promise<TextInputResult> {
 						const line = linesBuf[linesBuf.length - 1];
 						linesBuf[linesBuf.length - 1] = line.slice(0, cursorPos - 1) + line.slice(cursorPos);
 						cursorPos--;
-						redrawCurrentLine();
+						moveCursorToBoxTop();
+						drawBox();
 					}
 					continue;
 				}
@@ -195,7 +223,8 @@ export function readTextInput(prompt: string): Promise<TextInputResult> {
 					const line = linesBuf[linesBuf.length - 1];
 					linesBuf[linesBuf.length - 1] = line.slice(0, cursorPos) + "  " + line.slice(cursorPos);
 					cursorPos += 2;
-					redrawCurrentLine();
+					moveCursorToBoxTop();
+					drawBox();
 					continue;
 				}
 
@@ -204,17 +233,45 @@ export function readTextInput(prompt: string): Promise<TextInputResult> {
 					const line = linesBuf[linesBuf.length - 1];
 					linesBuf[linesBuf.length - 1] = line.slice(0, cursorPos) + ch + line.slice(cursorPos);
 					cursorPos++;
-					redrawCurrentLine();
+					moveCursorToBoxTop();
+					drawBox();
 				}
 			}
 		};
 
-		function finish() {
+		function moveCursorToBoxTop() {
+			// From current cursor position (inside the text area), move to the line
+			// before the top border so drawBox() can clear and redraw from there.
+			// Current cursor is at content row (linesBuf.length - 1 from top border)
+			// We need to go up past: content rows above cursor + top border
+			// But drawBox handles clearing with drawnRows, so just go up to start
+			const currentLineIdx = linesBuf.length - 1;
+			const rowsUp = currentLineIdx + 1; // content lines above + top border
+			if (rowsUp > 0) {
+				process.stderr.write(`\x1b[${rowsUp}A`);
+			}
+			process.stderr.write("\x1b[0G");
+		}
+
+		function finishAndClear() {
 			process.stdin.removeListener("data", onData);
 			if (origRawMode !== undefined) {
 				process.stdin.setRawMode(origRawMode);
 			}
-			process.stderr.write("\n");
+
+			// Move cursor to top of box and clear everything
+			moveCursorToBoxTop();
+			process.stderr.write("\x1b[J"); // erase to end of screen
+
+			// Write the submitted text as a clean line (so it's visible in scrollback)
+			const fullText = linesBuf.join("\n").trim();
+			if (fullText) {
+				const displayLines = fullText.split("\n");
+				for (let i = 0; i < displayLines.length; i++) {
+					const prefix = i === 0 ? `  ${coral("swarm")}${dim(">")} ` : `  ${dim(".")}       `;
+					process.stderr.write(`${prefix}${displayLines[i]}\n`);
+				}
+			}
 		}
 
 		process.stdin.on("data", onData);
