@@ -20,7 +20,7 @@
 import "./env.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as readline from "node:readline";
+import { readTextInput } from "./ui/text-input.js";
 
 // Dynamic imports — ensures env.js has set process.env BEFORE pi-ai loads
 await import("@mariozechner/pi-ai");
@@ -623,9 +623,13 @@ function cmdStatus(threadManager: ThreadManager, sessionStartTime: number, taskC
 
 // ── Configure command ───────────────────────────────────────────────────────
 
-async function cmdConfigure(config: SwarmConfig, resolved: ResolvedModel, rl: readline.Interface): Promise<void> {
+async function cmdConfigure(config: SwarmConfig, resolved: ResolvedModel): Promise<void> {
 	const out = process.stderr;
-	const ask = (q: string): Promise<string> => new Promise((res) => rl.question(q, (a) => res(a.trim())));
+	const ask = async (q: string): Promise<string> => {
+		const { readTextInput: readInput } = await import("./ui/text-input.js");
+		const result = await readInput(q);
+		return result.text;
+	};
 
 	out.write("\n");
 	out.write(`  ${bold(cyan("Configuration"))}\n`);
@@ -960,57 +964,20 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 	// Start Python REPL
 	await repl.start(sessionAc.signal);
 
-	// Create readline interface
-	const rl = readline.createInterface({
-		input: process.stdin,
-		output: process.stderr,
-		prompt: isTTY ? `  ${coral("swarm")}${dim(">")} ` : "swarm> ",
-		terminal: isTTY,
-	});
-
-	// SIGINT handling — first press cancels current task, second exits
 	let currentTaskAc: AbortController | null = null;
-	let sigintCount = 0;
 	let cleanupCalled = false;
-
-	// Forward declarations for mutual references
-	function handleSigint() {
-		sigintCount++;
-		if (sigintCount === 1 && currentTaskAc) {
-			// Cancel current task
-			process.stderr.write(`\n  ${yellow("Cancelling current task...")} ${dim("(press Ctrl+C again to exit)")}\n`);
-			currentTaskAc.abort();
-			currentTaskAc = null;
-		} else if (sigintCount >= 2) {
-			// Force exit
-			process.stderr.write(`\n  ${yellow("Exiting...")}\n`);
-			cleanup();
-		} else {
-			// No task running, treat as exit warning
-			process.stderr.write(`\n  ${dim("Press Ctrl+C again to exit, or type /quit")}\n`);
-			sigintCount = 1;
-			// Reset after 2 seconds
-			setTimeout(() => {
-				sigintCount = 0;
-			}, 2000);
-		}
-	}
 
 	async function cleanup() {
 		if (cleanupCalled) return;
 		cleanupCalled = true;
-		rl.close();
 		spinner.stop();
 		dashboard.clear();
-		process.removeListener("SIGINT", handleSigint);
 		sessionAc.abort();
 		repl.shutdown();
 		await threadManager.cleanup();
 		await opencodeMod.disableServerMode();
 		process.exit(0);
 	}
-
-	process.on("SIGINT", handleSigint);
 
 	// Thread handler (reused across tasks)
 	const threadHandler = async (
@@ -1111,7 +1078,6 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 	// Run a task through the RLM loop
 	const runTask = async (query: string): Promise<void> => {
 		taskCount++;
-		sigintCount = 0;
 		currentTaskAc = new AbortController();
 
 		// Link task abort to session abort
@@ -1193,7 +1159,6 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 		} finally {
 			sessionAc.signal.removeEventListener("abort", onSessionAbort);
 			currentTaskAc = null;
-			sigintCount = 0;
 		}
 	};
 
@@ -1251,7 +1216,7 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 				case "/configure":
 				case "/config":
 				case "/c":
-					await cmdConfigure(config, resolved, rl);
+					await cmdConfigure(config, resolved);
 					break;
 
 				case "/quit":
@@ -1272,15 +1237,22 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 		return false;
 	};
 
-	// REPL loop
-	rl.prompt();
+	// REPL loop — multi-line text input
+	const promptStr = `${coral("swarm")}${dim(">")} `;
 
-	rl.on("line", async (line: string) => {
-		// Pause readline during processing so prompt doesn't re-appear
-		rl.pause();
+	while (!cleanupCalled) {
+		const result = await readTextInput(promptStr);
+
+		if (result.action === "escape") {
+			await cleanup();
+			return;
+		}
+
+		const text = result.text;
+		if (!text) continue;
 
 		try {
-			const shouldExit = await processLine(line);
+			const shouldExit = await processLine(text);
 			if (shouldExit) {
 				await cleanup();
 				return;
@@ -1289,14 +1261,5 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 			const msg = err instanceof Error ? err.message : String(err);
 			logError(`Unexpected error: ${msg}`);
 		}
-
-		// Resume and show prompt again
-		rl.resume();
-		rl.prompt();
-	});
-
-	rl.on("close", async () => {
-		process.stderr.write("\n");
-		await cleanup();
-	});
+	}
 }
