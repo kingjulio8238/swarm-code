@@ -633,7 +633,15 @@ async function cmdConfigure(config: SwarmConfig, resolved: ResolvedModel, rl: re
 
 	out.write(`  ${dim("Current settings:")}\n`);
 	out.write(`    ${cyan("1")}  Agent          ${bold(config.default_agent)}\n`);
-	out.write(`    ${cyan("2")}  Model          ${bold(config.default_model)}\n`);
+	const displayModel =
+		resolved.provider === "ollama"
+			? `ollama/${resolved.model.id}`
+			: resolved.provider === "openrouter"
+				? `openrouter/${resolved.model.id}`
+				: resolved.model.id;
+	out.write(
+		`    ${cyan("2")}  Model          ${bold(displayModel)}${displayModel !== config.default_model ? dim(` (config: ${config.default_model})`) : ""}\n`,
+	);
 	out.write(`    ${cyan("3")}  Max threads    ${bold(String(config.max_threads))}\n`);
 	out.write(`    ${cyan("4")}  Auto routing   ${bold(config.auto_model_selection ? "on" : "off")}\n`);
 	out.write(`    ${cyan("5")}  Session budget ${bold(`$${config.max_session_budget_usd.toFixed(2)}`)}\n`);
@@ -664,8 +672,20 @@ async function cmdConfigure(config: SwarmConfig, resolved: ResolvedModel, rl: re
 			out.write(
 				`\n  ${dim("Enter model ID (e.g. ollama/deepseek-coder-v2, anthropic/claude-sonnet-4-6, openrouter/auto)")}\n`,
 			);
-			const val = await ask(`  ${coral(symbols.arrow)} New model [${config.default_model}]: `);
+			const val = await ask(`  ${coral(symbols.arrow)} New model [${displayModel}]: `);
 			if (val) {
+				// Check for OpenRouter API key
+				if (val.startsWith("openrouter/") && !process.env.OPENROUTER_API_KEY) {
+					out.write(`\n  ${dim("OpenRouter requires an API key (https://openrouter.ai/keys)")}\n`);
+					const key = await ask(`  ${coral(symbols.arrow)} OPENROUTER_API_KEY: `);
+					if (key) {
+						process.env.OPENROUTER_API_KEY = key;
+						logSuccess("OpenRouter API key set for this session");
+					} else {
+						logWarn("No API key provided — cannot use OpenRouter");
+						break;
+					}
+				}
 				const lookupId =
 					val.startsWith("ollama/") || val.startsWith("openrouter/")
 						? val
