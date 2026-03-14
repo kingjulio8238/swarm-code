@@ -36,11 +36,11 @@ await import("./agents/codex.js");
 await import("./agents/aider.js");
 
 import { randomBytes } from "node:crypto";
-// Api/Model types used via resolveModel from model-resolver
+import type { SwarmConfig } from "./config.js";
 import type { ThreadState } from "./core/types.js";
 import { EpisodicMemory } from "./memory/episodic.js";
 import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
-import { resolveModel } from "./routing/model-resolver.js";
+import { type ResolvedModel, resolveModel } from "./routing/model-resolver.js";
 import { classifyTaskComplexity, describeAvailableAgents, FailureTracker, routeTask } from "./routing/model-router.js";
 import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js";
 import { ThreadDashboard } from "./ui/dashboard.js";
@@ -272,6 +272,7 @@ function cmdHelp(): void {
 	out.write(`  ${cyan("/dag")}               ${dim("Show thread DAG with status indicators")}\n`);
 	out.write(`  ${cyan("/budget")}            ${dim("Show budget state")}\n`);
 	out.write(`  ${cyan("/status")}            ${dim("Overall session status")}\n`);
+	out.write(`  ${cyan("/configure")} ${dim("(/c)")}  ${dim("Change agent, model, or backend")}\n`);
 	out.write(`  ${cyan("/help")}              ${dim("Show this help")}\n`);
 	out.write(`  ${cyan("/quit")} ${dim("(/exit)")}     ${dim("Cleanup and exit")}\n`);
 	out.write("\n");
@@ -615,6 +616,124 @@ function cmdStatus(threadManager: ThreadManager, sessionStartTime: number, taskC
 	if (cache.hits > 0 || cache.size > 0) {
 		const saved = cache.totalSavedMs > 0 ? `, saved ${formatDuration(cache.totalSavedMs)}` : "";
 		out.write(`  ${dim("Cache")}         ${cache.hits} hits, ${cache.misses} misses, ${cache.size} entries${saved}\n`);
+	}
+
+	out.write("\n");
+}
+
+// ── Configure command ───────────────────────────────────────────────────────
+
+async function cmdConfigure(config: SwarmConfig, resolved: ResolvedModel, rl: readline.Interface): Promise<void> {
+	const out = process.stderr;
+	const ask = (q: string): Promise<string> => new Promise((res) => rl.question(q, (a) => res(a.trim())));
+
+	out.write("\n");
+	out.write(`  ${bold(cyan("Configuration"))}\n`);
+	out.write(`  ${dim(symbols.horizontal.repeat(40))}\n\n`);
+
+	out.write(`  ${dim("Current settings:")}\n`);
+	out.write(`    ${cyan("1")}  Agent          ${bold(config.default_agent)}\n`);
+	out.write(`    ${cyan("2")}  Model          ${bold(config.default_model)}\n`);
+	out.write(`    ${cyan("3")}  Max threads    ${bold(String(config.max_threads))}\n`);
+	out.write(`    ${cyan("4")}  Auto routing   ${bold(config.auto_model_selection ? "on" : "off")}\n`);
+	out.write(`    ${cyan("5")}  Session budget ${bold(`$${config.max_session_budget_usd.toFixed(2)}`)}\n`);
+	out.write(`    ${cyan("6")}  Thread budget  ${bold(`$${config.max_thread_budget_usd.toFixed(2)}`)}\n`);
+	out.write(`    ${cyan("7")}  Compression    ${bold(config.compression_strategy)}\n`);
+	out.write("\n");
+
+	const choice = await ask(`  ${coral(symbols.arrow)} Setting to change [1-7, or enter to cancel]: `);
+	if (!choice) {
+		out.write(`  ${dim("No changes made.")}\n\n`);
+		return;
+	}
+
+	switch (choice) {
+		case "1": {
+			const agents = (await import("./agents/provider.js")).listAgents();
+			out.write(`\n  ${dim("Available agents:")} ${agents.join(", ")}\n`);
+			const val = await ask(`  ${coral(symbols.arrow)} New agent [${config.default_agent}]: `);
+			if (val && agents.includes(val)) {
+				config.default_agent = val;
+				logSuccess(`Agent set to ${bold(val)}`);
+			} else if (val) {
+				logWarn(`Unknown agent "${val}"`);
+			}
+			break;
+		}
+		case "2": {
+			out.write(
+				`\n  ${dim("Enter model ID (e.g. ollama/deepseek-coder-v2, anthropic/claude-sonnet-4-6, openrouter/auto)")}\n`,
+			);
+			const val = await ask(`  ${coral(symbols.arrow)} New model [${config.default_model}]: `);
+			if (val) {
+				const lookupId =
+					val.startsWith("ollama/") || val.startsWith("openrouter/")
+						? val
+						: val.replace(/^(anthropic|openai|google)\//, "");
+				const newResolved = resolveModel(lookupId, logWarn);
+				if (newResolved) {
+					config.default_model = val;
+					resolved.model = newResolved.model;
+					resolved.provider = newResolved.provider;
+					logSuccess(`Model set to ${bold(val)}`);
+				} else {
+					logWarn(`Could not resolve model "${val}"`);
+				}
+			}
+			break;
+		}
+		case "3": {
+			const val = await ask(`  ${coral(symbols.arrow)} Max concurrent threads [${config.max_threads}]: `);
+			const n = parseInt(val, 10);
+			if (n >= 1 && n <= 20) {
+				config.max_threads = n;
+				logSuccess(`Max threads set to ${bold(String(n))}`);
+			} else if (val) {
+				logWarn("Must be between 1 and 20");
+			}
+			break;
+		}
+		case "4": {
+			config.auto_model_selection = !config.auto_model_selection;
+			logSuccess(`Auto routing ${bold(config.auto_model_selection ? "enabled" : "disabled")}`);
+			break;
+		}
+		case "5": {
+			const val = await ask(`  ${coral(symbols.arrow)} Session budget USD [${config.max_session_budget_usd}]: `);
+			const n = parseFloat(val);
+			if (Number.isFinite(n) && n > 0) {
+				config.max_session_budget_usd = n;
+				logSuccess(`Session budget set to ${bold(`$${n.toFixed(2)}`)}`);
+			} else if (val) {
+				logWarn("Must be a positive number");
+			}
+			break;
+		}
+		case "6": {
+			const val = await ask(`  ${coral(symbols.arrow)} Per-thread budget USD [${config.max_thread_budget_usd}]: `);
+			const n = parseFloat(val);
+			if (Number.isFinite(n) && n > 0) {
+				config.max_thread_budget_usd = n;
+				logSuccess(`Thread budget set to ${bold(`$${n.toFixed(2)}`)}`);
+			} else if (val) {
+				logWarn("Must be a positive number");
+			}
+			break;
+		}
+		case "7": {
+			const strategies = ["structured", "llm-summary", "diff-only", "truncate"] as const;
+			out.write(`\n  ${dim("Options:")} ${strategies.join(", ")}\n`);
+			const val = await ask(`  ${coral(symbols.arrow)} Compression [${config.compression_strategy}]: `);
+			if (val && (strategies as readonly string[]).includes(val)) {
+				config.compression_strategy = val as SwarmConfig["compression_strategy"];
+				logSuccess(`Compression set to ${bold(val)}`);
+			} else if (val) {
+				logWarn(`Unknown strategy "${val}"`);
+			}
+			break;
+		}
+		default:
+			logWarn("Invalid option");
 	}
 
 	out.write("\n");
@@ -1090,6 +1209,12 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 				case "/status":
 				case "/s":
 					cmdStatus(threadManager, sessionStartTime, taskCount);
+					break;
+
+				case "/configure":
+				case "/config":
+				case "/c":
+					await cmdConfigure(config, resolved, rl);
 					break;
 
 				case "/quit":
