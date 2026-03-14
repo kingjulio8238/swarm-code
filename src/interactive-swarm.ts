@@ -674,15 +674,30 @@ async function cmdConfigure(config: SwarmConfig, resolved: ResolvedModel, rl: re
 			);
 			const val = await ask(`  ${coral(symbols.arrow)} New model [${displayModel}]: `);
 			if (val) {
-				// Check for OpenRouter API key
-				if (val.startsWith("openrouter/") && !process.env.OPENROUTER_API_KEY) {
-					out.write(`\n  ${dim("OpenRouter requires an API key (https://openrouter.ai/keys)")}\n`);
-					const key = await ask(`  ${coral(symbols.arrow)} OPENROUTER_API_KEY: `);
+				// Check for required API keys
+				const keyChecks: Record<string, { env: string; url: string }> = {
+					openrouter: { env: "OPENROUTER_API_KEY", url: "https://openrouter.ai/keys" },
+					openai: { env: "OPENAI_API_KEY", url: "https://platform.openai.com/api-keys" },
+					anthropic: { env: "ANTHROPIC_API_KEY", url: "https://console.anthropic.com/settings/keys" },
+					google: { env: "GEMINI_API_KEY", url: "https://aistudio.google.com/apikey" },
+				};
+				// Determine which provider the model needs
+				let requiredProvider = "";
+				if (val.startsWith("openrouter/")) requiredProvider = "openrouter";
+				else if (val.startsWith("anthropic/") || val.startsWith("claude")) requiredProvider = "anthropic";
+				else if (val.startsWith("openai/") || val.startsWith("gpt") || val.startsWith("o3") || val.startsWith("o4"))
+					requiredProvider = "openai";
+				else if (val.startsWith("google/") || val.startsWith("gemini")) requiredProvider = "google";
+
+				const check = requiredProvider ? keyChecks[requiredProvider] : undefined;
+				if (check && !process.env[check.env]) {
+					out.write(`\n  ${dim(`${requiredProvider} requires an API key (${check.url})`)}\n`);
+					const key = await ask(`  ${coral(symbols.arrow)} ${check.env}: `);
 					if (key) {
-						process.env.OPENROUTER_API_KEY = key;
-						logSuccess("OpenRouter API key set for this session");
+						process.env[check.env] = key;
+						logSuccess(`${check.env} set for this session`);
 					} else {
-						logWarn("No API key provided — cannot use OpenRouter");
+						logWarn(`No API key provided — cannot use ${requiredProvider}`);
 						break;
 					}
 				}
