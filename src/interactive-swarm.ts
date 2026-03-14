@@ -19,6 +19,7 @@
 
 import "./env.js";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { readTextInput } from "./ui/text-input.js";
 
@@ -778,6 +779,25 @@ async function cmdConfigure(config: SwarmConfig, resolved: ResolvedModel): Promi
 			logWarn("Invalid option");
 	}
 
+	// Persist config changes to ~/.swarm/config.yaml
+	if (choice >= "1" && choice <= "7") {
+		try {
+			const configDir = path.join(os.homedir(), ".swarm");
+			fs.mkdirSync(configDir, { recursive: true });
+			const configLines = [
+				"# Swarm user preferences (updated by /configure)",
+				`# Updated: ${new Date().toISOString()}`,
+				"",
+				`default_agent: ${config.default_agent}`,
+				`default_model: ${config.default_model}`,
+				"",
+			];
+			fs.writeFileSync(path.join(configDir, "config.yaml"), configLines.join("\n"), "utf-8");
+		} catch {
+			// Non-fatal
+		}
+	}
+
 	out.write("\n");
 }
 
@@ -967,6 +987,7 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 	await repl.start(sessionAc.signal);
 
 	let currentTaskAc: AbortController | null = null;
+	let currentRunLog: RunLogger | null = null;
 	let cleanupCalled = false;
 
 	async function cleanup() {
@@ -1020,6 +1041,18 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 				model: resolvedModel,
 			},
 			files,
+		});
+
+		// Log thread to current run
+		currentRunLog?.addThread({
+			id: threadId,
+			task,
+			agent: resolvedAgent,
+			model: resolvedModel,
+			success: result.success,
+			durationMs: result.durationMs,
+			filesChanged: result.filesChanged,
+			error: result.success ? undefined : result.summary,
 		});
 
 		// Record episode or failure
@@ -1089,6 +1122,7 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 		spinner.start();
 		const startTime = Date.now();
 		const runLog = new RunLogger(query, resolved.model.id, config.default_agent, args.dir, config.max_iterations || 20);
+		currentRunLog = runLog;
 
 		try {
 			// Update episodic memory hints per-task
@@ -1176,6 +1210,7 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 		} finally {
 			sessionAc.signal.removeEventListener("abort", onSessionAbort);
 			currentTaskAc = null;
+			currentRunLog = null;
 		}
 	};
 
