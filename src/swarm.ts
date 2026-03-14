@@ -30,6 +30,7 @@ await import("./agents/aider.js");
 
 import { randomBytes } from "node:crypto";
 import type { Api, Model } from "@mariozechner/pi-ai";
+import { loadHooks, runHooks } from "./hooks/runner.js";
 import { EpisodicMemory } from "./memory/episodic.js";
 import { buildSwarmSystemPrompt } from "./prompts/orchestrator.js";
 import { classifyTaskComplexity, describeAvailableAgents, FailureTracker, routeTask } from "./routing/model-router.js";
@@ -324,6 +325,7 @@ function resolveModel(modelId: string): { model: Model<Api>; provider: string } 
 export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	const args = parseSwarmArgs(rawArgs);
 	const config = loadConfig();
+	const hooks = loadHooks(args.dir);
 
 	// Configure UI
 	if (args.json) setJsonMode(true);
@@ -471,6 +473,15 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			model: string,
 			files: string[],
 		) => {
+			// Context-size guard: warn and truncate if orchestrator sends too much context
+			const MAX_THREAD_CONTEXT = 50_000;
+			if (threadContext.length > MAX_THREAD_CONTEXT) {
+				logWarn(
+					`Thread context too large (${(threadContext.length / 1024).toFixed(0)}KB) — truncating to ${MAX_THREAD_CONTEXT / 1000}KB. Agents have full worktree access; pass only relevant excerpts.`,
+				);
+				threadContext = `${threadContext.slice(0, MAX_THREAD_CONTEXT)}\n\n[... truncated — ${threadContext.length - MAX_THREAD_CONTEXT} chars removed ...]`;
+			}
+
 			let resolvedAgent = agentBackend || config.default_agent;
 			let resolvedModel = model || config.default_model;
 			let routeSlot = "";
@@ -504,6 +515,18 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 				},
 				files,
 			});
+
+			// Run post-thread hooks (typecheck, lint, etc.) — success is silent, only errors surface
+			if (result.success && hooks.post_thread.length > 0) {
+				try {
+					const worktreePath = path.join(args.dir, config.worktree_base_dir, `wt-${threadId}`);
+					if (fs.existsSync(worktreePath)) {
+						runHooks(hooks.post_thread, worktreePath, "post_thread");
+					}
+				} catch (hookErr: any) {
+					logWarn(`Post-thread hook failed: ${hookErr.message}`);
+				}
+			}
 
 			// Track failure in the failure tracker for routing adjustments
 			if (!result.success) {
@@ -554,6 +577,26 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 			const summary = results
 				.map((r) => (r.success ? `Merged ${r.branch}: ${r.message}` : `FAILED ${r.branch}: ${r.message}`))
 				.join("\n");
+
+			// Run post-merge hooks (tests, etc.) — success is silent
+			if (merged > 0 && hooks.post_merge.length > 0) {
+				try {
+					const hookResults = runHooks(hooks.post_merge, args.dir, "post_merge");
+					const hookFailures = hookResults.filter((r) => !r.success);
+					if (hookFailures.length > 0) {
+						const hookOutput = hookFailures.map((r) => r.output).join("\n");
+						return {
+							result: `${summary}\n\nPost-merge verification failed:\n${hookOutput}`,
+							success: false,
+						};
+					}
+				} catch (hookErr: any) {
+					return {
+						result: `${summary}\n\nPost-merge hook blocked: ${hookErr.message}`,
+						success: false,
+					};
+				}
+			}
 
 			return {
 				result: summary || "No threads to merge",

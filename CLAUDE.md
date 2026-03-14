@@ -117,6 +117,7 @@ Package name is `swarm-code` on npm. Bin entries: `swarm-code` (primary) and `sw
 - `src/threads/manager.ts` — Thread lifecycle + concurrency (AsyncSemaphore) + subthread caching + episode recording
 - `src/threads/cache.ts` — Subthread cache with optional disk persistence and TTL expiry
 - `src/memory/episodic.ts` — Episodic memory: persists successful strategies, trigram-based recall, aggregate stats per agent
+- `src/hooks/runner.ts` — Lifecycle hooks (post_thread, post_merge, post_session). Deterministic verification — success silent, errors surfaced
 - `src/worktree/` — Git worktree CRUD + merge
 - `src/compression/` — Result compression with episode quality filtering (success-only output)
 - `src/prompts/orchestrator.ts` — Swarm orchestrator system prompt with DAG composition examples

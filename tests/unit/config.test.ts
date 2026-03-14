@@ -224,7 +224,7 @@ describe("loadConfig() with cwd parameter", () => {
 		expect(cfg.max_depth).toBe(3);
 		expect(cfg.max_sub_queries).toBe(50);
 		expect(cfg.max_threads).toBe(5);
-		expect(cfg.auto_model_selection).toBe(false);
+		expect(cfg.auto_model_selection).toBe(true);
 		expect(cfg.compression_strategy).toBe("structured");
 	});
 });
@@ -479,7 +479,7 @@ describe("Validation and clamping", () => {
 		writeConfig(dir, "auto_model_selection: yes\n");
 		const cfg = loadConfig(dir);
 		// "yes" is parsed as a string, not a boolean, so it falls back to default (false)
-		expect(cfg.auto_model_selection).toBe(false);
+		expect(cfg.auto_model_selection).toBe(true);
 	});
 
 	it("should fall back to default for non-boolean auto_cleanup_worktrees", () => {
@@ -567,7 +567,7 @@ describe("Defaults", () => {
 		expect(cfg.max_session_budget_usd).toBe(10.0);
 		expect(cfg.default_agent).toBe("opencode");
 		expect(cfg.default_model).toBe("anthropic/claude-sonnet-4-6");
-		expect(cfg.auto_model_selection).toBe(false);
+		expect(cfg.auto_model_selection).toBe(true);
 		expect(cfg.compression_strategy).toBe("structured");
 		expect(cfg.compression_max_tokens).toBe(1000);
 		expect(cfg.worktree_base_dir).toBe(".swarm-worktrees");

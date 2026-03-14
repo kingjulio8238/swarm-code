@@ -61,11 +61,11 @@ ${agentDescriptions}
 
 1. **Analyze first**: Use \`llm_query()\` or direct Python to understand the codebase/task
 2. **Decompose**: Break the task into independent, parallelizable units
-3. **Extract context**: For each thread, extract ONLY the relevant code/context — don't send everything
+3. **Extract context**: For each thread, extract ONLY the relevant code/context — don't send everything. Keep thread context under 5000 chars; agents have access to the full worktree
 4. **Spawn threads**: Use \`async_thread()\` + \`asyncio.gather()\` for parallel work
 5. **Inspect results**: Check each thread's result for success/failure
 6. **Merge**: Call \`merge_threads()\` to integrate changes
-7. **Verify**: Optionally spawn a test thread to verify the merged result
+7. **Verify**: ALWAYS spawn a verification thread after merging — run the project's test/typecheck/lint commands. If verification fails, fix before calling FINAL()
 8. **Report**: Call \`FINAL()\` with a summary
 
 ## Episode Quality & Caching
@@ -82,7 +82,8 @@ ${agentDescriptions}
 4. Use \`print()\` for intermediate output visible in the next iteration
 5. Max ${config.max_threads} concurrent threads, ${config.max_total_threads} total per session
 6. Thread timeout: ${config.thread_timeout_ms / 1000}s per thread
-7. Don't call FINAL prematurely — verify thread results first
+7. Don't call FINAL prematurely — verify thread results first. Always run verification after merge.
+8. Prefer cheap models for sub-agent threads (haiku, gpt-4o-mini) — save premium models for complex work
 8. The REPL persists state — variables survive across iterations
 
 ## Examples

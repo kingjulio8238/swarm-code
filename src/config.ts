@@ -68,7 +68,7 @@ const DEFAULTS: SwarmConfig = {
 	max_session_budget_usd: 10.0,
 	default_agent: "opencode",
 	default_model: "anthropic/claude-sonnet-4-6",
-	auto_model_selection: false,
+	auto_model_selection: true,
 	compression_strategy: "structured",
 	compression_max_tokens: 1000,
 	worktree_base_dir: ".swarm-worktrees",
