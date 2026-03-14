@@ -52,6 +52,7 @@ import {
 import { runOnboarding } from "./ui/onboarding.js";
 // UI system
 import { Spinner } from "./ui/spinner.js";
+import { StreamingFeed } from "./ui/streaming-feed.js";
 import { renderSummary, type SessionSummary } from "./ui/summary.js";
 import { type MergeAllOptions, mergeAllThreads } from "./worktree/merge.js";
 
@@ -327,16 +328,20 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	const repl = new PythonRepl();
 	const ac = new AbortController();
 
-	// Thread dashboard for live status
+	// Thread dashboard and streaming feed for live status
 	const dashboard = new ThreadDashboard();
+	const streamingFeed = new StreamingFeed();
 	spinner.setDashboard(dashboard);
+	spinner.setStreamingFeed(streamingFeed);
 
 	// Progress callback for thread events
 	const threadProgress: ThreadProgressCallback = (threadId, phase, detail) => {
 		if (phase === "completed" || phase === "failed" || phase === "cancelled") {
 			dashboard.complete(threadId, phase, detail);
+			streamingFeed.completeThread(threadId, phase, detail);
 		} else {
 			dashboard.update(threadId, phase, detail);
+			streamingFeed.updateThread(threadId, phase, detail);
 		}
 	};
 
@@ -348,6 +353,9 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 
 	// Initialize thread manager
 	const threadManager = new ThreadManager(args.dir, config, threadProgress, ac.signal);
+	threadManager.setThreadOutputCallback((threadId, chunk) => {
+		streamingFeed.appendOutput(threadId, chunk);
+	});
 	await threadManager.init();
 
 	if (episodicMemory) {
@@ -437,8 +445,13 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 
 			const threadId = randomBytes(6).toString("hex");
 
-			// Update dashboard with task info
+			// Update dashboard and streaming feed with task info
 			dashboard.update(threadId, "queued", undefined, {
+				task,
+				agent: resolvedAgent,
+				model: resolvedModel,
+			});
+			streamingFeed.updateThread(threadId, "queued", undefined, {
 				task,
 				agent: resolvedAgent,
 				model: resolvedModel,
@@ -598,6 +611,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 	} finally {
 		spinner.stop();
 		dashboard.clear();
+		streamingFeed.clear();
 		process.removeListener("SIGINT", abortAndExit);
 		process.removeListener("SIGTERM", abortAndExit);
 		repl.shutdown();

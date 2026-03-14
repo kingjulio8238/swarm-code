@@ -14,12 +14,41 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
+import * as fs from "node:fs";
 import * as http from "node:http";
 import * as os from "node:os";
+import * as path from "node:path";
 import type { AgentProvider, AgentResult, AgentRunOptions } from "../core/types.js";
 import { registerAgent } from "./provider.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Ensure model string is in `provider/model` format as required by OpenCode.
+ * If no provider prefix is present, infer it from the model name.
+ */
+function normalizeModelForOpenCode(model: string): string {
+	if (model.includes("/")) return model;
+
+	// Infer provider from model name prefix patterns
+	if (model.startsWith("gpt-") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4")) {
+		return `openai/${model}`;
+	}
+	if (model.startsWith("claude-")) {
+		return `anthropic/${model}`;
+	}
+	if (model.startsWith("gemini-")) {
+		return `google/${model}`;
+	}
+	if (model.startsWith("deepseek-")) {
+		return `deepseek/${model}`;
+	}
+	if (model.startsWith("llama-") || model.startsWith("codellama-")) {
+		return `ollama/${model}`;
+	}
+	// Can't infer — return as-is and let OpenCode handle it
+	return model;
+}
 
 async function commandExists(cmd: string): Promise<boolean> {
 	return new Promise((resolve) => {
@@ -128,6 +157,16 @@ function extractFromParsed(parsed: OpenCodeJsonOutput): {
 /** Whitelist of env vars safe to pass to agent subprocess. */
 function buildAgentEnv(): Record<string, string | undefined> {
 	const homeDir = os.homedir();
+
+	// Isolate OpenCode's data dir to prevent stale auth tokens (e.g. expired
+	// OAuth) from causing "Model not found" errors on startup.
+	const agentDataDir = path.join(homeDir, ".swarm", "agent-data");
+	try {
+		fs.mkdirSync(agentDataDir, { recursive: true });
+	} catch {
+		// Non-fatal
+	}
+
 	return {
 		PATH: process.env.PATH,
 		HOME: homeDir,
@@ -135,9 +174,12 @@ function buildAgentEnv(): Record<string, string | undefined> {
 		SHELL: process.env.SHELL,
 		TERM: process.env.TERM,
 		LANG: process.env.LANG,
+		TMPDIR: process.env.TMPDIR,
+		XDG_DATA_HOME: agentDataDir,
 		ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
 		OPENAI_API_KEY: process.env.OPENAI_API_KEY,
 		GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+		OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
 		GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME,
 		GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL,
 		GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME,
@@ -367,7 +409,7 @@ async function runViaHttpApi(
 		const msgBody: Record<string, unknown> = {
 			parts: [{ type: "text", text: task }],
 		};
-		if (model) msgBody.model = model;
+		if (model) msgBody.model = normalizeModelForOpenCode(model);
 
 		const msgRes = await httpPost(`${serverUrl}/session/${sessionId}/message`, msgBody, signal);
 		if (!msgRes) return null;
@@ -501,7 +543,7 @@ function runViaAttach(
 ): Promise<AgentResult> {
 	const startTime = Date.now();
 	const args = ["run", "--attach", serverUrl, "--format", "json"];
-	if (model) args.push("--model", model);
+	if (model) args.push("--model", normalizeModelForOpenCode(model));
 	args.push(task);
 
 	return runSubprocess(args, workDir, startTime, signal, onOutput);
@@ -522,7 +564,7 @@ function runViaSubprocess(
 ): Promise<AgentResult> {
 	const startTime = Date.now();
 	const args = ["run", "--format", "json"];
-	if (model) args.push("--model", model);
+	if (model) args.push("--model", normalizeModelForOpenCode(model));
 	args.push(task);
 
 	return runSubprocess(args, workDir, startTime, signal, onOutput);

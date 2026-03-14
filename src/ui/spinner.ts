@@ -4,12 +4,14 @@
  * Runs on an isolated 80ms animation loop separated from other output.
  * Displays a coral-colored spinner glyph + a rotating verb + optional detail.
  *
- * Coordinates with ThreadDashboard — the spinner owns the render cycle:
- * spinner line first, then dashboard lines below. This prevents interleaving.
+ * Coordinates with ThreadDashboard or StreamingFeed — the spinner owns the
+ * render cycle: spinner line first, then extra lines below. This prevents
+ * interleaving.
  */
 
 import type { ThreadDashboard } from "./dashboard.js";
-import { coral, dim, isTTY, stripAnsi, termWidth } from "./theme.js";
+import type { StreamingFeed } from "./streaming-feed.js";
+import { coral, dim, isTTY, termWidth } from "./theme.js";
 
 /** Playful verbs shown while the spinner is active. */
 const VERBS = [
@@ -45,6 +47,11 @@ const VERBS = [
 
 const SPINNER_CHARS = isTTY ? ["\u00B7", "\u2726", "\u2733", "\u2736", "\u273B", "\u273D"] : ["*"];
 
+/** Common interface for anything that provides extra lines below the spinner. */
+interface LinesProvider {
+	getLines(): string[];
+}
+
 export class Spinner {
 	private static _exitHandlerRegistered = false;
 	private intervalId: ReturnType<typeof setInterval> | null = null;
@@ -55,12 +62,18 @@ export class Spinner {
 	private startTime = 0;
 	private running = false;
 	private dashboard: ThreadDashboard | null = null;
+	private streamingFeed: StreamingFeed | null = null;
 	/** How many lines we wrote below the spinner (dashboard) */
 	private extraLines = 0;
 
 	/** Link a dashboard so the spinner owns its render cycle. */
 	setDashboard(d: ThreadDashboard): void {
 		this.dashboard = d;
+	}
+
+	/** Link a streaming feed so the spinner owns its render cycle. */
+	setStreamingFeed(f: StreamingFeed): void {
+		this.streamingFeed = f;
 	}
 
 	/** Start the spinner. */
@@ -133,13 +146,16 @@ export class Spinner {
 
 		const maxW = termWidth();
 
+		// When streaming feed is active, use its status detail automatically
+		const activeDetail = this.streamingFeed ? this.streamingFeed.getStatusDetail() || this.detail : this.detail;
+
 		// Build detail string, truncating if needed (ANSI-safe)
 		let detailStr = "";
-		if (this.detail) {
+		if (activeDetail) {
 			const prefix = `  X ${verb}...  ${elapsed}s`;
 			const available = maxW - prefix.length - 1;
 			if (available > 5) {
-				const raw = this.detail;
+				const raw = activeDetail;
 				detailStr = raw.length > available ? dim(` ${raw.slice(0, available - 2)}\u2026`) : dim(` ${raw}`);
 			}
 		}
@@ -159,13 +175,14 @@ export class Spinner {
 		// Write spinner line (we're on the spinner line now)
 		process.stderr.write(`\r\x1b[2K${line}`);
 
-		// Write dashboard lines below if we have a linked dashboard
-		if (this.dashboard) {
-			const dashLines = this.dashboard.getLines();
-			if (dashLines.length > 0) {
+		// Write extra lines below — streaming feed takes priority over dashboard
+		const provider: LinesProvider | null = this.streamingFeed || this.dashboard;
+		if (provider) {
+			const extraLines = provider.getLines();
+			if (extraLines.length > 0) {
 				process.stderr.write("\n");
-				process.stderr.write(dashLines.join("\n"));
-				this.extraLines = dashLines.length;
+				process.stderr.write(extraLines.join("\n"));
+				this.extraLines = extraLines.length;
 				// Move cursor back up to the spinner line
 				if (this.extraLines > 0) {
 					process.stderr.write(`\x1b[${this.extraLines}A`);

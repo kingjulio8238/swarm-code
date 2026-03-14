@@ -295,6 +295,7 @@ function pickAlternativeAgent(
 // ── Thread Manager ──────────────────────────────────────────────────────────
 
 export type ThreadProgressCallback = (threadId: string, phase: ThreadProgressPhase, detail?: string) => void;
+export type ThreadOutputCallback = (threadId: string, chunk: string) => void;
 
 export class ThreadManager {
 	private threads: Map<string, ThreadState> = new Map();
@@ -306,6 +307,7 @@ export class ThreadManager {
 	private threadCache: ThreadCache;
 	private episodicMemory?: EpisodicMemory;
 	private onThreadProgress?: ThreadProgressCallback;
+	private onThreadOutput?: ThreadOutputCallback;
 	private sessionAbort?: AbortSignal;
 	private threadAbortControllers: Map<string, AbortController> = new Map();
 
@@ -326,6 +328,11 @@ export class ThreadManager {
 		);
 		this.onThreadProgress = onThreadProgress;
 		this.sessionAbort = sessionAbort;
+	}
+
+	/** Set the output streaming callback for live agent output. */
+	setThreadOutputCallback(cb: ThreadOutputCallback): void {
+		this.onThreadOutput = cb;
 	}
 
 	/** Set the episodic memory store for recording thread outcomes. */
@@ -572,6 +579,7 @@ export class ThreadManager {
 					model: threadConfig.agent.model || this.config.default_model,
 					files: threadConfig.files,
 					signal: combinedAc.signal,
+					onOutput: this.onThreadOutput ? (chunk: string) => this.onThreadOutput!(threadId, chunk) : undefined,
 				});
 			} finally {
 				signal.removeEventListener("abort", onAbort);

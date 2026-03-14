@@ -50,6 +50,7 @@ import { runOnboarding } from "./ui/onboarding.js";
 import { RunLogger } from "./ui/run-log.js";
 // UI system
 import { Spinner } from "./ui/spinner.js";
+import { StreamingFeed } from "./ui/streaming-feed.js";
 import { bold, coral, cyan, dim, green, isTTY, red, symbols, termWidth, truncate, yellow } from "./ui/theme.js";
 import { type MergeAllOptions, mergeAllThreads, mergeThreadBranch } from "./worktree/merge.js";
 
@@ -925,13 +926,17 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 	const sessionAc = new AbortController();
 
 	const dashboard = new ThreadDashboard();
+	const streamingFeed = new StreamingFeed();
 	spinner.setDashboard(dashboard);
+	spinner.setStreamingFeed(streamingFeed);
 
 	const threadProgress: ThreadProgressCallback = (threadId, phase, detail) => {
 		if (phase === "completed" || phase === "failed" || phase === "cancelled") {
 			dashboard.complete(threadId, phase, detail);
+			streamingFeed.completeThread(threadId, phase, detail);
 		} else {
 			dashboard.update(threadId, phase, detail);
+			streamingFeed.updateThread(threadId, phase, detail);
 		}
 	};
 
@@ -943,6 +948,9 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 
 	// Initialize thread manager
 	const threadManager = new ThreadManager(args.dir, config, threadProgress, sessionAc.signal);
+	threadManager.setThreadOutputCallback((threadId, chunk) => {
+		streamingFeed.appendOutput(threadId, chunk);
+	});
 	await threadManager.init();
 
 	if (episodicMemory) {
@@ -999,6 +1007,7 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 		cleanupCalled = true;
 		spinner.stop();
 		dashboard.clear();
+		streamingFeed.clear();
 		sessionAc.abort();
 		repl.shutdown();
 		await threadManager.cleanup();
