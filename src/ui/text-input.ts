@@ -56,18 +56,23 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 		process.stdin.resume();
 		process.stdin.setEncoding("utf-8");
 
-		// Track how many terminal rows we've drawn so we can clear them
-		let drawnRows = 0;
+		// How many rows below the top border the cursor sits after drawBox()
+		let cursorRowFromTop = 0;
+		let hasDrawn = false;
 
 		function drawBox() {
 			const out = process.stderr;
+			const promptVisibleLen = 2; // "❯ "
 
-			// Clear previously drawn rows
-			if (drawnRows > 0) {
-				for (let i = 0; i < drawnRows; i++) {
-					out.write("\x1b[1A\x1b[2K");
+			if (hasDrawn) {
+				// Move cursor from its current position back to the top border row
+				if (cursorRowFromTop > 0) {
+					out.write(`\x1b[${cursorRowFromTop}A`);
 				}
+				out.write("\x1b[0G"); // go to column 0
+				out.write("\x1b[J"); // erase from cursor to end of screen
 			}
+			hasDrawn = true;
 
 			// Top border — thin dim line
 			const topLine = `${BORDER_COLOR}${"─".repeat(w)}${RESET}`;
@@ -75,15 +80,13 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 
 			// Content rows — dark background, full width
 			const promptChar = `${ACCENT_COLOR}❯${RESET} `;
-			const promptVisibleLen = 2; // "❯ "
 
 			for (let i = 0; i < linesBuf.length; i++) {
 				const lineText = linesBuf[i];
 				const prefix = i === 0 ? promptChar : `${dim("·")} `;
-				const prefixVisibleLen = promptVisibleLen;
 
 				// How much space for text content
-				const contentWidth = w - prefixVisibleLen;
+				const contentWidth = w - promptVisibleLen;
 				// Truncate display if line is too long
 				const displayText = lineText.length > contentWidth ? lineText.slice(0, contentWidth - 1) + "…" : lineText;
 				const padding = Math.max(0, contentWidth - displayText.length);
@@ -98,8 +101,6 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 			// Hints
 			out.write(`${dim("  enter submit  esc exit")}\n`);
 
-			drawnRows = linesBuf.length + 3; // top border + content lines + bottom border + hints
-
 			// Position cursor inside the text area
 			// We're at the bottom (after hints). Move up to the correct content row.
 			const currentLineIdx = linesBuf.length - 1; // cursor is always on last line
@@ -108,6 +109,9 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 			// Move to correct column: prefix width + cursor position
 			const col = promptVisibleLen + cursorPos + 1;
 			out.write(`\x1b[${col}G`);
+
+			// Track where cursor ended up (row 0 = top border)
+			cursorRowFromTop = 1 + currentLineIdx;
 		}
 
 		// Initial draw
@@ -133,8 +137,6 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 					cursorPos = line.length;
 				}
 
-				// Move cursor back to top of box before redraw
-				moveCursorToBoxTop();
 				drawBox();
 				return;
 			}
@@ -149,28 +151,24 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 						if (code === "C" && cursorPos < linesBuf[linesBuf.length - 1].length) {
 							cursorPos++;
 							i += 2;
-							moveCursorToBoxTop();
 							drawBox();
 							continue;
 						}
 						if (code === "D" && cursorPos > 0) {
 							cursorPos--;
 							i += 2;
-							moveCursorToBoxTop();
 							drawBox();
 							continue;
 						}
 						if (code === "H") {
 							cursorPos = 0;
 							i += 2;
-							moveCursorToBoxTop();
 							drawBox();
 							continue;
 						}
 						if (code === "F") {
 							cursorPos = linesBuf[linesBuf.length - 1].length;
 							i += 2;
-							moveCursorToBoxTop();
 							drawBox();
 							continue;
 						}
@@ -212,7 +210,6 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 						const line = linesBuf[linesBuf.length - 1];
 						linesBuf[linesBuf.length - 1] = line.slice(0, cursorPos - 1) + line.slice(cursorPos);
 						cursorPos--;
-						moveCursorToBoxTop();
 						drawBox();
 					}
 					continue;
@@ -223,7 +220,6 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 					const line = linesBuf[linesBuf.length - 1];
 					linesBuf[linesBuf.length - 1] = line.slice(0, cursorPos) + "  " + line.slice(cursorPos);
 					cursorPos += 2;
-					moveCursorToBoxTop();
 					drawBox();
 					continue;
 				}
@@ -233,25 +229,10 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 					const line = linesBuf[linesBuf.length - 1];
 					linesBuf[linesBuf.length - 1] = line.slice(0, cursorPos) + ch + line.slice(cursorPos);
 					cursorPos++;
-					moveCursorToBoxTop();
 					drawBox();
 				}
 			}
 		};
-
-		function moveCursorToBoxTop() {
-			// From current cursor position (inside the text area), move to the line
-			// before the top border so drawBox() can clear and redraw from there.
-			// Current cursor is at content row (linesBuf.length - 1 from top border)
-			// We need to go up past: content rows above cursor + top border
-			// But drawBox handles clearing with drawnRows, so just go up to start
-			const currentLineIdx = linesBuf.length - 1;
-			const rowsUp = currentLineIdx + 1; // content lines above + top border
-			if (rowsUp > 0) {
-				process.stderr.write(`\x1b[${rowsUp}A`);
-			}
-			process.stderr.write("\x1b[0G");
-		}
 
 		function finishAndClear() {
 			process.stdin.removeListener("data", onData);
@@ -260,7 +241,10 @@ export function readTextInput(_prompt: string): Promise<TextInputResult> {
 			}
 
 			// Move cursor to top of box and clear everything
-			moveCursorToBoxTop();
+			if (cursorRowFromTop > 0) {
+				process.stderr.write(`\x1b[${cursorRowFromTop}A`);
+			}
+			process.stderr.write("\x1b[0G");
 			process.stderr.write("\x1b[J"); // erase to end of screen
 
 			// Write the submitted text as a clean line (so it's visible in scrollback)
