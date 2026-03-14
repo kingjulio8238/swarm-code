@@ -214,6 +214,9 @@ class OpenCodeServerPool {
 			resolveReady = resolve;
 			rejectReady = reject;
 		});
+		// Prevent unhandled rejection crash — timeout/exit rejections are
+		// communicated via the null return from startServer(), not via this promise.
+		readyPromise.catch(() => {});
 
 		const proc = spawn("opencode", ["serve", "--port", String(port), "--hostname", hostname], {
 			cwd,
