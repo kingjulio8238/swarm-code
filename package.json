@@ -1,6 +1,6 @@
 {
   "name": "swarm-code",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Open-source swarm-native coding agent orchestrator — spawns parallel coding agents in isolated git worktrees, built on RLM (arXiv:2512.24601)",
   "type": "module",
   "bin": {
