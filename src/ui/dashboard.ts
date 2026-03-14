@@ -1,9 +1,9 @@
 /**
  * Live thread status dashboard — shows running/queued/completed threads.
  *
- * Inspired by Claude Code's collapsed tool results: shows concise status
- * per thread, color-coded by phase, with elapsed time and file counts.
- * Uses in-place terminal updates for a live-updating display.
+ * Rendering is owned by the Spinner — the dashboard builds lines but does NOT
+ * write directly to stderr. This prevents interleaving between the spinner's
+ * 80ms animation loop and async thread progress callbacks.
  */
 
 import { getLogLevel, isJsonMode } from "./log.js";
@@ -21,13 +21,13 @@ interface ThreadStatus {
 }
 
 /**
- * Thread dashboard — manages a live-updating display of thread states.
- * Renders below the spinner line using ANSI cursor movement.
+ * Thread dashboard — manages thread state and builds status lines.
+ * Does NOT write to stderr directly — the Spinner calls getLines()
+ * on each render tick to include dashboard output atomically.
  */
 export class ThreadDashboard {
 	private threads: Map<string, ThreadStatus> = new Map();
 	private pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
-	private lastLineCount = 0;
 	private enabled: boolean;
 
 	constructor() {
@@ -63,60 +63,35 @@ export class ThreadDashboard {
 				detail,
 			});
 		}
-		this.render();
+		// No direct render — spinner picks up changes on next tick
 	}
 
-	/** Remove a thread from the dashboard (when done). */
+	/** Mark a thread as done. Auto-removes after 1.5s. */
 	complete(id: string, phase: string, detail?: string): void {
 		const existing = this.threads.get(id);
 		if (existing) {
 			existing.phase = phase;
 			if (detail) existing.detail = detail;
 		}
-		this.render();
 
-		// Remove completed/failed threads after a brief display
 		const timer = setTimeout(() => {
 			this.pendingTimers.delete(timer);
 			this.threads.delete(id);
-			this.render();
 		}, 1500);
 		this.pendingTimers.add(timer);
 	}
 
-	/** Clear all dashboard output and cancel pending timers. */
+	/** Clear all state and cancel pending timers. */
 	clear(): void {
 		for (const timer of this.pendingTimers) clearTimeout(timer);
 		this.pendingTimers.clear();
-		if (!this.enabled) return;
-		this.clearLines();
 		this.threads.clear();
-		this.lastLineCount = 0;
 	}
 
-	private render(): void {
-		if (!this.enabled) return;
-
-		// Clear previous output
-		this.clearLines();
-
-		const lines = this.buildLines();
-		if (lines.length === 0) {
-			this.lastLineCount = 0;
-			return;
-		}
-
-		// Write new lines
-		process.stderr.write(`${lines.join("\n")}\n`);
-		this.lastLineCount = lines.length;
-	}
-
-	private clearLines(): void {
-		if (this.lastLineCount <= 0) return;
-		// Move up and clear each line
-		for (let i = 0; i < this.lastLineCount; i++) {
-			process.stderr.write("\x1b[1A\x1b[K");
-		}
+	/** Get the current dashboard lines (called by Spinner.render). */
+	getLines(): string[] {
+		if (!this.enabled || this.threads.size === 0) return [];
+		return this.buildLines();
 	}
 
 	private buildLines(): string[] {
@@ -142,9 +117,12 @@ export class ThreadDashboard {
 				line = `    ${tag}  ${phase}  ${time}  ${dim(task)}`;
 			}
 
-			// Truncate to terminal width
-			if (stripAnsi(line).length > w) {
-				line = line.slice(0, w + (line.length - stripAnsi(line).length) - 1);
+			// ANSI-safe truncation — count visible chars, not raw string length
+			const visible = stripAnsi(line);
+			if (visible.length > w) {
+				// Rebuild truncated: just trim the last visible portion
+				const ansiOverhead = line.length - visible.length;
+				line = `${line.slice(0, w - 1 + ansiOverhead)}\x1b[0m`;
 			}
 			lines.push(line);
 		}

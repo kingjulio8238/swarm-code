@@ -3,8 +3,12 @@
  *
  * Runs on an isolated 80ms animation loop separated from other output.
  * Displays a coral-colored spinner glyph + a rotating verb + optional detail.
+ *
+ * Coordinates with ThreadDashboard — the spinner owns the render cycle:
+ * spinner line first, then dashboard lines below. This prevents interleaving.
  */
 
+import type { ThreadDashboard } from "./dashboard.js";
 import { coral, dim, isTTY, stripAnsi, termWidth } from "./theme.js";
 
 /** Playful verbs shown while the spinner is active. */
@@ -50,6 +54,14 @@ export class Spinner {
 	private detail = "";
 	private startTime = 0;
 	private running = false;
+	private dashboard: ThreadDashboard | null = null;
+	/** How many lines we wrote below the spinner (dashboard) */
+	private extraLines = 0;
+
+	/** Link a dashboard so the spinner owns its render cycle. */
+	setDashboard(d: ThreadDashboard): void {
+		this.dashboard = d;
+	}
 
 	/** Start the spinner. */
 	start(detail?: string): void {
@@ -59,6 +71,7 @@ export class Spinner {
 		this.startTime = Date.now();
 		this.frameIdx = 0;
 		this.totalFrames = 0;
+		this.extraLines = 0;
 		this.verbIdx = Math.floor(Math.random() * VERBS.length);
 
 		// Hide cursor + register exit handler to restore it
@@ -88,7 +101,7 @@ export class Spinner {
 		this.detail = detail;
 	}
 
-	/** Stop the spinner and clear the line. */
+	/** Stop the spinner and clear everything (spinner + dashboard lines). */
 	stop(): void {
 		if (!this.running) return;
 		this.running = false;
@@ -96,8 +109,9 @@ export class Spinner {
 			clearInterval(this.intervalId);
 			this.intervalId = null;
 		}
-		// Clear spinner line and show cursor
-		process.stderr.write("\r\x1b[K\x1b[?25h");
+		// Clear spinner line + all dashboard lines below using "erase to end of screen"
+		process.stderr.write(`\r\x1b[K\x1b[J\x1b[?25h`);
+		this.extraLines = 0;
 	}
 
 	/** Whether the spinner is currently active. */
@@ -105,19 +119,61 @@ export class Spinner {
 		return this.running;
 	}
 
+	/** Called by the dashboard when it wants to re-render. */
+	requestDashboardRender(): void {
+		// Dashboard render happens on next spinner tick — no immediate write.
+		// This prevents interleaving.
+	}
+
 	private render(): void {
 		const elapsed = ((Date.now() - this.startTime) / 1000).toFixed(1);
 		const char = coral(SPINNER_CHARS[this.frameIdx]);
 		const verb = VERBS[this.verbIdx];
 		const time = dim(`${elapsed}s`);
-		const detail = this.detail ? dim(` ${this.detail}`) : "";
 
-		const line = `  ${char} ${verb}...${detail}  ${time}`;
 		const maxW = termWidth();
-		const stripped = stripAnsi(line);
 
-		// Truncate if wider than terminal
-		const output = stripped.length > maxW ? line.slice(0, maxW - 1) : line;
-		process.stderr.write(`\r\x1b[K${output}`);
+		// Build detail string, truncating if needed (ANSI-safe)
+		let detailStr = "";
+		if (this.detail) {
+			const prefix = `  X ${verb}...  ${elapsed}s`;
+			const available = maxW - prefix.length - 1;
+			if (available > 5) {
+				const raw = this.detail;
+				detailStr = raw.length > available ? dim(` ${raw.slice(0, available - 2)}\u2026`) : dim(` ${raw}`);
+			}
+		}
+
+		const line = `  ${char} ${verb}...${detailStr}  ${time}`;
+
+		// Clear previous extra lines (dashboard) — move up from current position
+		// Current cursor is on spinner line after last render
+		if (this.extraLines > 0) {
+			// Move down to the last dashboard line, then clear upward
+			process.stderr.write(`\x1b[${this.extraLines}B`); // move down past dashboard
+			for (let i = 0; i < this.extraLines; i++) {
+				process.stderr.write("\x1b[1A\x1b[2K"); // move up + clear line
+			}
+		}
+
+		// Write spinner line (we're on the spinner line now)
+		process.stderr.write(`\r\x1b[2K${line}`);
+
+		// Write dashboard lines below if we have a linked dashboard
+		if (this.dashboard) {
+			const dashLines = this.dashboard.getLines();
+			if (dashLines.length > 0) {
+				process.stderr.write("\n");
+				process.stderr.write(dashLines.join("\n"));
+				this.extraLines = dashLines.length;
+				// Move cursor back up to the spinner line
+				if (this.extraLines > 0) {
+					process.stderr.write(`\x1b[${this.extraLines}A`);
+				}
+				process.stderr.write("\r");
+			} else {
+				this.extraLines = 0;
+			}
+		}
 	}
 }

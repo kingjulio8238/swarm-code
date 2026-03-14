@@ -329,6 +329,7 @@ export async function runSwarmMode(rawArgs: string[]): Promise<void> {
 
 	// Thread dashboard for live status
 	const dashboard = new ThreadDashboard();
+	spinner.setDashboard(dashboard);
 
 	// Progress callback for thread events
 	const threadProgress: ThreadProgressCallback = (threadId, phase, detail) => {

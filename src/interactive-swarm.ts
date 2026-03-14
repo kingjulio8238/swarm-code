@@ -46,6 +46,7 @@ import { ThreadManager, type ThreadProgressCallback } from "./threads/manager.js
 import { ThreadDashboard } from "./ui/dashboard.js";
 import { logError, logRouter, logSuccess, logVerbose, logWarn, setLogLevel } from "./ui/log.js";
 import { runOnboarding } from "./ui/onboarding.js";
+import { RunLogger } from "./ui/run-log.js";
 // UI system
 import { Spinner } from "./ui/spinner.js";
 import { bold, coral, cyan, dim, green, isTTY, red, symbols, termWidth, truncate, yellow } from "./ui/theme.js";
@@ -900,6 +901,7 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 	const sessionAc = new AbortController();
 
 	const dashboard = new ThreadDashboard();
+	spinner.setDashboard(dashboard);
 
 	const threadProgress: ThreadProgressCallback = (threadId, phase, detail) => {
 		if (phase === "completed" || phase === "failed" || phase === "cancelled") {
@@ -1086,6 +1088,7 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 
 		spinner.start();
 		const startTime = Date.now();
+		const runLog = new RunLogger(query, resolved.model.id, config.default_agent, args.dir, config.max_iterations || 20);
 
 		try {
 			// Update episodic memory hints per-task
@@ -1116,7 +1119,7 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 				onProgress: (info) => {
 					spinner.update(
 						`iteration ${info.iteration}/${info.maxIterations}` +
-							(info.subQueries > 0 ? ` · ${info.subQueries} queries` : ""),
+							(info.subQueries > 0 ? ` \u00B7 ${info.subQueries} queries` : ""),
 					);
 					logVerbose(
 						`Iteration ${info.iteration}/${info.maxIterations} | ` +
@@ -1130,6 +1133,13 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 
 			const elapsed = (Date.now() - startTime) / 1000;
 
+			// Log the run
+			runLog.complete(
+				{ completed: result.completed, iterations: result.iterations, answer: result.answer },
+				Date.now() - startTime,
+			);
+			const logPath = runLog.save();
+
 			// Show concise result
 			process.stderr.write("\n");
 			const status = result.completed ? green("completed") : yellow("incomplete");
@@ -1140,21 +1150,28 @@ export async function runInteractiveSwarm(rawArgs: string[]): Promise<void> {
 			// Show answer
 			if (result.answer) {
 				process.stderr.write("\n");
-				const lines = result.answer.split("\n");
-				for (const line of lines) {
+				const answerLines = result.answer.split("\n");
+				for (const line of answerLines) {
 					process.stderr.write(`  ${line}\n`);
 				}
+			}
+
+			if (logPath) {
+				process.stderr.write(`  ${dim(`log: ${logPath}`)}\n`);
 			}
 			process.stderr.write("\n");
 		} catch (err) {
 			spinner.stop();
 			dashboard.clear();
 
+			const errMsg = err instanceof Error ? err.message : String(err);
+			runLog.complete({ completed: false, iterations: 0, error: errMsg }, Date.now() - startTime);
+			runLog.save();
+
 			if (currentTaskAc?.signal.aborted) {
 				logWarn("Task cancelled");
 			} else {
-				const msg = err instanceof Error ? err.message : String(err);
-				logError(`Task failed: ${msg}`);
+				logError(`Task failed: ${errMsg}`);
 			}
 		} finally {
 			sessionAc.signal.removeEventListener("abort", onSessionAbort);
