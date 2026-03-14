@@ -1732,30 +1732,76 @@ async function interactive(): Promise<void> {
 				}
 				console.log();
 			} else {
-				// Agent works without keys (e.g. OpenCode) — set up Ollama directly
-				console.log(`  ${c.bold}${agent.name}${c.reset} ${c.dim}— setting up Ollama for local models:${c.reset}\n`);
-				const ok = await ensureOllamaSetup(setupRl, "ollama/deepseek-coder-v2");
-				if (ok) usesOllama = true;
+				// Agent works without keys (e.g. OpenCode) — choose backend
+				console.log(`  ${c.bold}${agent.name}${c.reset} ${c.dim}— choose your backend:${c.reset}\n`);
+				console.log(
+					`  ${c.dim}1${c.reset}  Ollama       ${c.dim}Run models locally (free, requires download)${c.reset}`,
+				);
+				console.log(
+					`  ${c.dim}2${c.reset}  OpenRouter   ${c.dim}Cloud API for 200+ models (requires API key)${c.reset}`,
+				);
+				console.log();
+
+				const backendChoice = await questionWithEsc(setupRl, `  ${c.cyan}Backend [1-2]:${c.reset} `);
+				const pickedOpenRouter = backendChoice !== null && backendChoice.trim() === "2";
+
+				if (pickedOpenRouter) {
+					// OpenRouter setup
+					console.log();
+					const orKey = await questionWithEsc(setupRl, `  ${c.cyan}OPENROUTER_API_KEY:${c.reset} `);
+					if (orKey?.trim()) {
+						process.env.OPENROUTER_API_KEY = orKey.trim();
+						try {
+							const envPath = path.join(process.cwd(), ".env");
+							let envContent = "";
+							try {
+								envContent = fs.readFileSync(envPath, "utf-8");
+							} catch {}
+							if (!envContent.includes("OPENROUTER_API_KEY")) {
+								fs.appendFileSync(envPath, `\nOPENROUTER_API_KEY=${orKey.trim()}\n`);
+							}
+							console.log(`  ${c.green}✓${c.reset} OpenRouter configured`);
+						} catch {
+							console.log(`  ${c.green}✓${c.reset} OpenRouter key set for this session`);
+						}
+						currentModelId = "openrouter/auto";
+						saveModelPreference(currentModelId);
+					} else {
+						console.log(`  ${c.dim}No key provided — you can set OPENROUTER_API_KEY in .env later${c.reset}`);
+					}
+				} else {
+					// Ollama setup
+					console.log();
+					const ok = await ensureOllamaSetup(setupRl, "ollama/deepseek-coder-v2");
+					if (ok) usesOllama = true;
+				}
 				console.log();
 			}
 		}
 
 		// ── Step 3: Set default model ────────────────────────────────
-		const activeProvider = Object.keys(PROVIDER_KEYS).find((p) => process.env[providerEnvKey(p)]);
-		if (activeProvider) {
-			currentProviderName = activeProvider;
-			const defaultModel = getDefaultModelForProvider(activeProvider);
-			if (defaultModel) {
-				currentModelId = defaultModel;
-				saveModelPreference(currentModelId);
-				console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
-			}
-		} else if (usesOllama) {
-			currentModelId = "ollama/deepseek-coder-v2";
-			saveModelPreference(currentModelId);
+		if (currentModelId.startsWith("openrouter/")) {
+			// Already set during OpenRouter setup
 			console.log(
-				`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset} ${c.dim}(local)${c.reset}`,
+				`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset} ${c.dim}(OpenRouter)${c.reset}`,
 			);
+		} else {
+			const activeProvider = Object.keys(PROVIDER_KEYS).find((p) => process.env[providerEnvKey(p)]);
+			if (activeProvider) {
+				currentProviderName = activeProvider;
+				const defaultModel = getDefaultModelForProvider(activeProvider);
+				if (defaultModel) {
+					currentModelId = defaultModel;
+					saveModelPreference(currentModelId);
+					console.log(`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset}`);
+				}
+			} else if (usesOllama) {
+				currentModelId = "ollama/deepseek-coder-v2";
+				saveModelPreference(currentModelId);
+				console.log(
+					`  ${c.green}✓${c.reset} Default model: ${c.bold}${currentModelId}${c.reset} ${c.dim}(local)${c.reset}`,
+				);
+			}
 		}
 		console.log();
 		setupRl.close();
@@ -1791,12 +1837,12 @@ async function interactive(): Promise<void> {
 	}
 
 	if (!currentModel) {
-		if (currentModelId.startsWith("ollama/")) {
-			// Ollama model selected — this interactive REPL mode needs a cloud API.
-			// Redirect to swarm mode which works with OpenCode + Ollama.
-			console.log(`\n  ${c.green}✓${c.reset} Ollama model selected: ${c.bold}${currentModelId}${c.reset}`);
+		if (currentModelId.startsWith("ollama/") || currentModelId.startsWith("openrouter/")) {
+			// Non-pi-ai model — redirect to swarm mode which uses OpenCode natively.
+			const backend = currentModelId.startsWith("ollama/") ? "Ollama" : "OpenRouter";
+			console.log(`\n  ${c.green}✓${c.reset} ${backend} model selected: ${c.bold}${currentModelId}${c.reset}`);
 			console.log(`\n  ${c.dim}This interactive REPL uses direct LLM API calls.${c.reset}`);
-			console.log(`  ${c.dim}To use Ollama models with OpenCode, run:${c.reset}\n`);
+			console.log(`  ${c.dim}To use ${backend} with OpenCode, run:${c.reset}\n`);
 			console.log(`  ${c.bold}swarm --dir ./your-project "your task"${c.reset}\n`);
 			process.exit(0);
 		}
