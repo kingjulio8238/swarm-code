@@ -690,7 +690,9 @@ async function cmdConfigure(config: SwarmConfig, resolved: ResolvedModel, rl: re
 				else if (val.startsWith("google/") || val.startsWith("gemini")) requiredProvider = "google";
 
 				const check = requiredProvider ? keyChecks[requiredProvider] : undefined;
-				if (check && !process.env[check.env]) {
+				const envVal = check ? process.env[check.env] : undefined;
+				const hasRealKey = envVal && envVal !== "ollama-local";
+				if (check && !hasRealKey) {
 					out.write(`\n  ${dim(`${requiredProvider} requires an API key (${check.url})`)}\n`);
 					const key = await ask(`  ${coral(symbols.arrow)} ${check.env}: `);
 					if (key) {
