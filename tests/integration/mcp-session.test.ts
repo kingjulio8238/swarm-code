@@ -9,8 +9,21 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanupTempRepo, createTempGitRepo } from "../fixtures/helpers.js";
+
+// Mock os.homedir to prevent ~/.swarm/config.yaml from interfering with tests.
+// vi.hoisted ensures the variable is available when vi.mock factory runs.
+const fakeHome = vi.hoisted(() =>
+	require("node:path").join(require("node:os").tmpdir(), `swarm-mcp-session-test-fakehome-${process.pid}`),
+);
+vi.mock("node:os", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:os")>();
+	return {
+		...actual,
+		homedir: () => fakeHome,
+	};
+});
 
 // Register mock agent before importing session module
 import "../../src/agents/mock.js";
