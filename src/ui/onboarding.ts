@@ -11,11 +11,12 @@
  * Triggered once on first `swarm --dir` invocation. Saves ~/.swarm/.initialized marker.
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, execSync, spawn, spawn as spawnChild } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import { getLogLevel, isJsonMode } from "./log.js";
 import { bold, coral, cyan, dim, green, isTTY, red, stripAnsi, symbols, termWidth, yellow } from "./theme.js";
 
@@ -25,7 +26,19 @@ const SWARM_DIR = path.join(os.homedir(), ".swarm");
 const MARKER_FILE = path.join(SWARM_DIR, ".initialized");
 const CRED_FILE = path.join(SWARM_DIR, "credentials");
 const USER_CONFIG_FILE = path.join(SWARM_DIR, "config.yaml");
-const VERSION = "0.1.0";
+
+// Read version from package.json instead of hardcoding
+function getVersion(): string {
+	try {
+		const __dir = path.dirname(fileURLToPath(import.meta.url));
+		const pkgPath = path.join(__dir, "..", "..", "package.json");
+		const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+		return pkg.version || "0.0.0";
+	} catch {
+		return "0.0.0";
+	}
+}
+const VERSION = getVersion();
 
 /** Which API key each agent backend requires (or supports). */
 const AGENT_PROVIDERS: Record<string, { required: string[]; description: string; install: string }> = {
@@ -144,6 +157,152 @@ async function checkAgentBackends(): Promise<CheckResult[]> {
 	// direct-llm is always available
 	results.push({ name: "direct-llm", ok: true, detail: "built-in" });
 	return results;
+}
+
+// ── Ollama helpers ────────────────────────────────────────────────────────────
+
+function isOllamaInstalled(): boolean {
+	try {
+		execFileSync("ollama", ["--version"], { stdio: ["ignore", "pipe", "pipe"], timeout: 5000 });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function isOllamaModelAvailable(model: string): boolean {
+	try {
+		const output = execFileSync("ollama", ["list"], {
+			encoding: "utf-8",
+			stdio: ["ignore", "pipe", "pipe"],
+			timeout: 10000,
+		});
+		return output.includes(model);
+	} catch {
+		return false;
+	}
+}
+
+async function installOllama(): Promise<boolean> {
+	process.stderr.write(`\n  ${bold("Installing Ollama...")}\n\n`);
+	if (process.platform === "darwin") {
+		try {
+			execFileSync("brew", ["--version"], { stdio: "ignore", timeout: 5000 });
+			process.stderr.write(`  ${dim("Using Homebrew...")}\n`);
+			try {
+				execSync("brew install ollama", { stdio: "inherit", timeout: 120000 });
+				return true;
+			} catch {
+				process.stderr.write(`  ${dim("Homebrew install failed, trying curl installer...")}\n`);
+			}
+		} catch {
+			// No brew — fall through to curl
+		}
+	}
+	if (process.platform === "linux" || process.platform === "darwin") {
+		try {
+			execSync("curl -fsSL https://ollama.com/install.sh | sh", { stdio: "inherit", timeout: 180000 });
+			return true;
+		} catch {
+			return false;
+		}
+	}
+	process.stderr.write(`  ${dim("Download Ollama from: https://ollama.com/download")}\n`);
+	return false;
+}
+
+function isOllamaServing(): boolean {
+	try {
+		execFileSync("curl", ["-sf", "http://127.0.0.1:11434/api/tags"], {
+			stdio: ["ignore", "pipe", "pipe"],
+			timeout: 3000,
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function startOllamaServe(): void {
+	const child = spawnChild("ollama", ["serve"], { stdio: "ignore", detached: true });
+	child.unref();
+}
+
+async function pullOllamaModel(model: string): Promise<boolean> {
+	process.stderr.write(`\n  ${bold(`Pulling ${model}...`)} ${dim("(this may take a few minutes)")}\n\n`);
+	return new Promise((resolve) => {
+		const child = spawnChild("ollama", ["pull", model], { stdio: "inherit" });
+		child.on("close", (code) => resolve(code === 0));
+		child.on("error", () => resolve(false));
+	});
+}
+
+async function ensureOllamaSetup(promptFn: () => ReturnType<typeof createPrompt>, model: string): Promise<boolean> {
+	const shortModel = model.replace("ollama/", "");
+
+	if (!isOllamaInstalled()) {
+		process.stderr.write(`\n  ${dim("Ollama is not installed. It's needed to run open-source models locally.")}\n`);
+		const prompt = promptFn();
+		const install = await prompt.ask(`  ${coral(symbols.arrow)} Install Ollama now? [Y/n]: `);
+		prompt.close();
+		if (install.toLowerCase() !== "n" && install.toLowerCase() !== "no") {
+			const ok = await installOllama();
+			if (!ok) {
+				process.stderr.write(`\n  ${red("Failed to install Ollama.")}\n`);
+				process.stderr.write(`  ${dim("Install manually from https://ollama.com/download")}\n\n`);
+				return false;
+			}
+			process.stderr.write(`  ${green(symbols.check)} Ollama installed\n`);
+		} else {
+			process.stderr.write(`\n  ${dim("Install later from https://ollama.com/download")}\n\n`);
+			return false;
+		}
+	} else {
+		process.stderr.write(`  ${green(symbols.check)} Ollama installed\n`);
+	}
+
+	if (!isOllamaServing()) {
+		process.stderr.write(`  ${dim("Starting Ollama server...")}\n`);
+		startOllamaServe();
+		let retries = 10;
+		while (retries > 0 && !isOllamaServing()) {
+			await new Promise((r) => setTimeout(r, 1000));
+			retries--;
+		}
+		if (isOllamaServing()) {
+			process.stderr.write(`  ${green(symbols.check)} Ollama server running\n`);
+		} else {
+			process.stderr.write(
+				`  ${yellow(symbols.warn)} Could not start Ollama server. Run ${bold("ollama serve")} manually.\n`,
+			);
+			return false;
+		}
+	} else {
+		process.stderr.write(`  ${green(symbols.check)} Ollama server running\n`);
+	}
+
+	if (isOllamaModelAvailable(shortModel)) {
+		process.stderr.write(`  ${green(symbols.check)} Model ${bold(shortModel)} ready\n\n`);
+		return true;
+	}
+
+	process.stderr.write(`  ${dim(`Model ${shortModel} not found locally.`)}\n`);
+	const prompt = promptFn();
+	const pull = await prompt.ask(`\n  ${coral(symbols.arrow)} Pull ${bold(shortModel)} now? [Y/n]: `);
+	prompt.close();
+	if (pull.toLowerCase() !== "n" && pull.toLowerCase() !== "no") {
+		const ok = await pullOllamaModel(shortModel);
+		if (!ok) {
+			process.stderr.write(`\n  ${red(`Failed to pull ${shortModel}.`)}\n`);
+			process.stderr.write(`  ${dim(`Try manually: ollama pull ${shortModel}`)}\n\n`);
+			return false;
+		}
+		process.stderr.write(`  ${green(symbols.check)} Model ${bold(shortModel)} ready\n\n`);
+		return true;
+	}
+
+	process.stderr.write(`\n  ${dim(`Run later: ollama pull ${shortModel}`)}\n\n`);
+	return false;
 }
 
 // ── Interactive helpers ───────────────────────────────────────────────────────
@@ -446,114 +605,202 @@ export async function runOnboarding(): Promise<void> {
 		chosenAgent = "direct-llm";
 	}
 
-	// ── Step 2: Configure API keys ───────────────────────────────────────
+	// ── Step 2: Configure backend / API keys ────────────────────────────
 	const agentInfo = AGENT_PROVIDERS[chosenAgent];
 	const neededKeys = agentInfo?.required ?? ["ANTHROPIC_API_KEY"];
-	// For agents that accept any provider (opencode, aider), at least one key is needed
 	const needsAnyKey = neededKeys.length > 1;
-	const missingKeys = neededKeys.filter((k) => !apiKeys.has(k));
 	const hasAnyNeeded = neededKeys.some((k) => apiKeys.has(k));
+	let chosenModel = "anthropic/claude-sonnet-4-6";
+	let usesOllama = false;
+	let usesOpenRouter = false;
 
-	if (missingKeys.length > 0 && !(needsAnyKey && hasAnyNeeded)) {
-		sectionHeader("API Keys", w);
+	// OpenCode with no API keys → offer Ollama (default) or OpenRouter
+	if (chosenAgent === "opencode" && !hasAnyNeeded) {
+		sectionHeader("Backend", w);
 
-		if (needsAnyKey) {
-			process.stderr.write(`  ${bold(chosenAgent)} supports multiple providers. Configure at least one:\n\n`);
-		} else {
-			process.stderr.write(`  ${bold(chosenAgent)} needs the following API key(s):\n\n`);
-		}
+		process.stderr.write(`  ${bold("OpenCode")} ${dim("— choose your backend:")}\n\n`);
+		process.stderr.write(`    ${cyan("1")}  Ollama       ${dim("Run models locally (free, requires download)")}\n`);
+		process.stderr.write(`    ${cyan("2")}  OpenRouter   ${dim("Cloud API for 200+ models (requires API key)")}\n`);
+		process.stderr.write(`    ${cyan("3")}  API Key      ${dim("Configure Anthropic/OpenAI/Google directly")}\n`);
+		process.stderr.write("\n");
 
-		for (const envVar of missingKeys) {
-			const provider = PROVIDERS.find((p) => p.envVar === envVar);
-			if (!provider) continue;
+		const prompt = createPrompt();
+		const backendChoice = await prompt.ask(`  ${coral(symbols.arrow)} Backend [1]: `);
+		prompt.close();
 
-			const prompt = createPrompt();
-			const yn = await prompt.ask(
-				`  ${coral(symbols.arrow)} Configure ${bold(provider.name)} (${dim(envVar)})? [y/n]: `,
-			);
-			prompt.close();
+		const choice = backendChoice.trim();
 
-			if (yn.toLowerCase() !== "y" && yn.toLowerCase() !== "yes") {
-				process.stderr.write(`  ${dim(symbols.dash)} Skipped ${provider.name}\n`);
-				continue;
-			}
+		if (choice === "2") {
+			// OpenRouter setup
+			process.stderr.write("\n");
+			const keyPrompt = createPrompt();
+			const orKey = await keyPrompt.ask(`  ${coral(symbols.arrow)} OPENROUTER_API_KEY: `);
+			keyPrompt.close();
 
-			process.stderr.write(`  ${dim(`Paste your ${provider.name} API key (input hidden):`)}\n`);
-			const key = await readHiddenInput(`  ${coral(symbols.arrow)} `);
-
-			if (key && key.length >= 10) {
-				saveCredential(envVar, key);
-				apiKeys.set(envVar, key);
-				process.stderr.write(
-					`  ${green(symbols.check)} Saved ${provider.name} key to ${dim("~/.swarm/credentials")}\n\n`,
-				);
+			if (orKey?.trim()) {
+				process.env.OPENROUTER_API_KEY = orKey.trim();
+				saveCredential("OPENROUTER_API_KEY", orKey.trim());
+				process.stderr.write(`  ${green(symbols.check)} OpenRouter configured\n`);
+				chosenModel = "openrouter/auto";
+				usesOpenRouter = true;
 			} else {
-				process.stderr.write(`  ${dim("Skipped — set later in .env or ~/.swarm/credentials")}\n\n`);
+				process.stderr.write(`  ${dim("No key provided — you can set OPENROUTER_API_KEY in .env later")}\n`);
+			}
+		} else if (choice === "3") {
+			// Fall through to standard API key setup below
+		} else {
+			// Default: Ollama setup
+			process.stderr.write("\n");
+			const ok = await ensureOllamaSetup(createPrompt, "ollama/deepseek-coder-v2");
+			if (ok) {
+				usesOllama = true;
+				chosenModel = "ollama/deepseek-coder-v2";
+			}
+		}
+
+		// If choice was "3", do the standard API key flow
+		if (choice === "3") {
+			sectionHeader("API Keys", w);
+			process.stderr.write(`  ${bold(chosenAgent)} supports multiple providers. Configure at least one:\n\n`);
+
+			const missingKeys = neededKeys.filter((k) => !apiKeys.has(k));
+			for (const envVar of missingKeys) {
+				const provider = PROVIDERS.find((p) => p.envVar === envVar);
+				if (!provider) continue;
+
+				const kp = createPrompt();
+				const yn = await kp.ask(`  ${coral(symbols.arrow)} Configure ${bold(provider.name)} (${dim(envVar)})? [y/n]: `);
+				kp.close();
+
+				if (yn.toLowerCase() !== "y" && yn.toLowerCase() !== "yes") {
+					process.stderr.write(`  ${dim(symbols.dash)} Skipped ${provider.name}\n`);
+					continue;
+				}
+
+				process.stderr.write(`  ${dim(`Paste your ${provider.name} API key (input hidden):`)}\n`);
+				const key = await readHiddenInput(`  ${coral(symbols.arrow)} `);
+
+				if (key && key.length >= 10) {
+					saveCredential(envVar, key);
+					apiKeys.set(envVar, key);
+					process.stderr.write(
+						`  ${green(symbols.check)} Saved ${provider.name} key to ${dim("~/.swarm/credentials")}\n\n`,
+					);
+				} else {
+					process.stderr.write(`  ${dim("Skipped — set later in .env or ~/.swarm/credentials")}\n\n`);
+				}
+
+				if (apiKeys.has(envVar)) break;
+			}
+		}
+	} else if (!hasAnyNeeded) {
+		// Non-opencode agent with missing keys — standard API key flow
+		const missingKeys = neededKeys.filter((k) => !apiKeys.has(k));
+		if (missingKeys.length > 0) {
+			sectionHeader("API Keys", w);
+
+			if (needsAnyKey) {
+				process.stderr.write(`  ${bold(chosenAgent)} supports multiple providers. Configure at least one:\n\n`);
+			} else {
+				process.stderr.write(`  ${bold(chosenAgent)} needs the following API key(s):\n\n`);
 			}
 
-			// For multi-provider agents, stop after first successful key
-			if (needsAnyKey && apiKeys.has(envVar)) break;
+			for (const envVar of missingKeys) {
+				const provider = PROVIDERS.find((p) => p.envVar === envVar);
+				if (!provider) continue;
+
+				const prompt = createPrompt();
+				const yn = await prompt.ask(
+					`  ${coral(symbols.arrow)} Configure ${bold(provider.name)} (${dim(envVar)})? [y/n]: `,
+				);
+				prompt.close();
+
+				if (yn.toLowerCase() !== "y" && yn.toLowerCase() !== "yes") {
+					process.stderr.write(`  ${dim(symbols.dash)} Skipped ${provider.name}\n`);
+					continue;
+				}
+
+				process.stderr.write(`  ${dim(`Paste your ${provider.name} API key (input hidden):`)}\n`);
+				const key = await readHiddenInput(`  ${coral(symbols.arrow)} `);
+
+				if (key && key.length >= 10) {
+					saveCredential(envVar, key);
+					apiKeys.set(envVar, key);
+					process.stderr.write(
+						`  ${green(symbols.check)} Saved ${provider.name} key to ${dim("~/.swarm/credentials")}\n\n`,
+					);
+				} else {
+					process.stderr.write(`  ${dim("Skipped — set later in .env or ~/.swarm/credentials")}\n\n`);
+				}
+
+				if (needsAnyKey && apiKeys.has(envVar)) break;
+			}
 		}
-	} else if (apiKeys.size > 0) {
-		// Keys already configured — just confirm
+	} else {
 		process.stderr.write(`  ${green(symbols.check)} API keys already configured\n`);
 	}
 
 	// ── Step 3: Choose default model ─────────────────────────────────────
-	// Suggest a model based on available keys
-	const configuredProviders = PROVIDERS.filter((p) => apiKeys.has(p.envVar));
-	let chosenModel = "anthropic/claude-sonnet-4-6"; // default
+	if (!usesOllama && !usesOpenRouter) {
+		const configuredProviders = PROVIDERS.filter((p) => apiKeys.has(p.envVar));
 
-	if (configuredProviders.length > 0) {
-		sectionHeader("Default Model", w);
+		if (configuredProviders.length > 0) {
+			sectionHeader("Default Model", w);
 
-		const modelOptions = configuredProviders.flatMap((p) => {
-			const models: { label: string; value: string; recommended?: boolean }[] = [];
-			if (p.envVar === "ANTHROPIC_API_KEY") {
-				models.push(
-					{
-						label: `claude-sonnet-4-6 ${dim("(fast, capable)")}`,
-						value: "anthropic/claude-sonnet-4-6",
-						recommended: true,
-					},
-					{ label: `claude-opus-4-6 ${dim("(most capable)")}`, value: "anthropic/claude-opus-4-6" },
-				);
-			} else if (p.envVar === "OPENAI_API_KEY") {
-				models.push(
-					{ label: `gpt-4o ${dim("(fast, versatile)")}`, value: "openai/gpt-4o" },
-					{ label: `o3 ${dim("(reasoning)")}`, value: "openai/o3" },
-				);
-			} else if (p.envVar === "GEMINI_API_KEY") {
-				models.push(
-					{ label: `gemini-2.5-flash ${dim("(fast, cheap)")}`, value: "google/gemini-2.5-flash" },
-					{ label: `gemini-2.5-pro ${dim("(capable)")}`, value: "google/gemini-2.5-pro" },
-				);
+			const modelOptions = configuredProviders.flatMap((p) => {
+				const models: { label: string; value: string; recommended?: boolean }[] = [];
+				if (p.envVar === "ANTHROPIC_API_KEY") {
+					models.push(
+						{
+							label: `claude-sonnet-4-6 ${dim("(fast, capable)")}`,
+							value: "anthropic/claude-sonnet-4-6",
+							recommended: true,
+						},
+						{
+							label: `claude-opus-4-6 ${dim("(most capable)")}`,
+							value: "anthropic/claude-opus-4-6",
+						},
+					);
+				} else if (p.envVar === "OPENAI_API_KEY") {
+					models.push(
+						{ label: `gpt-4o ${dim("(fast, versatile)")}`, value: "openai/gpt-4o" },
+						{ label: `o3 ${dim("(reasoning)")}`, value: "openai/o3" },
+					);
+				} else if (p.envVar === "GEMINI_API_KEY") {
+					models.push(
+						{
+							label: `gemini-2.5-flash ${dim("(fast, cheap)")}`,
+							value: "google/gemini-2.5-flash",
+						},
+						{ label: `gemini-2.5-pro ${dim("(capable)")}`, value: "google/gemini-2.5-pro" },
+					);
+				}
+				return models;
+			});
+
+			if (modelOptions.length > 0) {
+				process.stderr.write(`  ${bold("Pick a default model for coding threads:")}\n\n`);
+
+				for (let i = 0; i < modelOptions.length; i++) {
+					const opt = modelOptions[i];
+					const rec = opt.recommended ? ` ${coral("(recommended)")}` : "";
+					process.stderr.write(`    ${cyan(String(i + 1))}  ${opt.label}${rec}\n`);
+				}
+				process.stderr.write("\n");
+
+				const prompt = createPrompt();
+				const modelChoice = await prompt.ask(`  ${coral(symbols.arrow)} Choice [1]: `);
+				prompt.close();
+
+				const idx = parseInt(modelChoice, 10);
+				if (idx >= 1 && idx <= modelOptions.length) {
+					chosenModel = modelOptions[idx - 1].value;
+				} else {
+					chosenModel = modelOptions[0].value;
+				}
+
+				process.stderr.write(`  ${green(symbols.check)} Default model: ${bold(chosenModel)}\n`);
 			}
-			return models;
-		});
-
-		if (modelOptions.length > 0) {
-			process.stderr.write(`  ${bold("Pick a default model for coding threads:")}\n\n`);
-
-			for (let i = 0; i < modelOptions.length; i++) {
-				const opt = modelOptions[i];
-				const rec = opt.recommended ? ` ${coral("(recommended)")}` : "";
-				process.stderr.write(`    ${cyan(String(i + 1))}  ${opt.label}${rec}\n`);
-			}
-			process.stderr.write("\n");
-
-			const prompt = createPrompt();
-			const modelChoice = await prompt.ask(`  ${coral(symbols.arrow)} Choice [1]: `);
-			prompt.close();
-
-			const idx = parseInt(modelChoice, 10);
-			if (idx >= 1 && idx <= modelOptions.length) {
-				chosenModel = modelOptions[idx - 1].value;
-			} else {
-				chosenModel = modelOptions[0].value;
-			}
-
-			process.stderr.write(`  ${green(symbols.check)} Default model: ${bold(chosenModel)}\n`);
 		}
 	}
 
@@ -566,26 +813,29 @@ export async function runOnboarding(): Promise<void> {
 	process.stderr.write(`  ${green(symbols.check)} Agent:  ${bold(chosenAgent)}\n`);
 	process.stderr.write(`  ${green(symbols.check)} Model:  ${bold(chosenModel)}\n`);
 
-	const keyNames = [...apiKeys.keys()].map((k) => {
-		const p = PROVIDERS.find((pr) => pr.envVar === k);
-		return p?.name ?? k;
-	});
-	if (keyNames.length > 0) {
-		process.stderr.write(`  ${green(symbols.check)} Keys:   ${bold(keyNames.join(", "))}\n`);
+	if (usesOllama) {
+		process.stderr.write(`  ${green(symbols.check)} Backend: ${bold("Ollama")} ${dim("(local)")}\n`);
+	} else if (usesOpenRouter) {
+		process.stderr.write(`  ${green(symbols.check)} Backend: ${bold("OpenRouter")}\n`);
+	} else {
+		const keyNames = [...apiKeys.keys()].map((k) => {
+			const p = PROVIDERS.find((pr) => pr.envVar === k);
+			return p?.name ?? k;
+		});
+		if (keyNames.length > 0) {
+			process.stderr.write(`  ${green(symbols.check)} Keys:   ${bold(keyNames.join(", "))}\n`);
+		}
 	}
 
 	process.stderr.write(`  ${green(symbols.check)} Config: ${dim("~/.swarm/config.yaml")}\n`);
-	process.stderr.write(`\n  ${dim("Run")} ${yellow('swarm --dir ./project "your task"')} ${dim("to get started.")}\n`);
-	process.stderr.write(
-		`  ${dim("Edit")} ${cyan("~/.swarm/config.yaml")} ${dim("to change these settings anytime.")}\n`,
-	);
+	process.stderr.write("\n");
 
 	// If still missing critical deps, show warnings
 	if (!gitVer) {
-		process.stderr.write(`\n  ${red(symbols.cross)} ${bold("git is required.")} Install it before using swarm.\n`);
+		process.stderr.write(`  ${red(symbols.cross)} ${bold("git is required.")} Install it before using swarm.\n`);
 	}
-	if (apiKeys.size === 0) {
-		process.stderr.write(`\n  ${yellow(symbols.warn)} ${bold("No API keys configured.")}\n`);
+	if (apiKeys.size === 0 && !usesOllama && !usesOpenRouter) {
+		process.stderr.write(`  ${yellow(symbols.warn)} ${bold("No API keys configured.")}\n`);
 		process.stderr.write(
 			`  ${dim("Add keys to")} ${cyan("~/.swarm/credentials")} ${dim("or")} ${cyan(".env")}${dim(":")}\n`,
 		);
